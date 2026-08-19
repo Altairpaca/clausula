@@ -145,6 +145,45 @@ def main(argv=None):
     planning_get = planning_actions.add_parser("get")
     planning_get.add_argument("plan")
 
+    decision = subparsers.add_parser("decision")
+    decision_actions = decision.add_subparsers(dest="action", required=True)
+    decision_create = decision_actions.add_parser("create")
+    decision_create.add_argument("portfolio")
+    decision_create.add_argument("title")
+    decision_create.add_argument("intent", choices=("trade", "non_trade"))
+    decision_create.add_argument("as_of")
+    decision_create.add_argument("--rationale", required=True)
+    decision_create.add_argument("--known-as-of")
+    decision_create.add_argument("--policy-version")
+    decision_create.add_argument("--plan")
+    decision_create.add_argument("--alternatives", default="[]", help="JSON text or a JSON file path")
+    decision_create.add_argument("--created-at")
+    decision_create.add_argument("--recorded-at")
+    decision_list = decision_actions.add_parser("list")
+    decision_list.add_argument("--portfolio")
+    decision_get = decision_actions.add_parser("get")
+    decision_get.add_argument("decision")
+    decision_policy = decision_actions.add_parser("link-policy")
+    decision_policy.add_argument("decision")
+    decision_policy.add_argument("policy_version")
+    decision_policy.add_argument("--link-type", default="governs")
+    decision_evidence = decision_actions.add_parser("link-evidence")
+    decision_evidence.add_argument("decision")
+    decision_evidence.add_argument("evidence")
+    decision_evidence.add_argument("--kind", default="research")
+    decision_evidence.add_argument("--relation", choices=("supports", "contradicts", "context"), default="supports")
+    decision_transaction = decision_actions.add_parser("link-transaction")
+    decision_transaction.add_argument("decision")
+    decision_transaction.add_argument("transaction")
+    decision_transaction.add_argument("--relation", default="executed")
+    decision_transaction.add_argument("--linked-at")
+    decision_review = decision_actions.add_parser("review")
+    decision_review.add_argument("decision")
+    decision_review.add_argument("review_type", choices=("process", "outcome"))
+    decision_review.add_argument("--notes", required=True)
+    decision_review.add_argument("--score", type=int)
+    decision_review.add_argument("--reviewed-at")
+
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
     system_actions.add_parser("check")
@@ -353,6 +392,57 @@ def main(argv=None):
         output = registry.execute(
             "planning.get", {"plan_id": args.plan}, permissions={"planning:read"}
         )
+    elif args.command == "decision" and args.action == "create":
+        arguments = {
+            "portfolio_id": args.portfolio,
+            "title": args.title,
+            "intent": args.intent,
+            "rationale": args.rationale,
+            "as_of": args.as_of,
+            "alternatives": _json_argument(args.alternatives),
+        }
+        optional = {
+            "known_as_of": args.known_as_of,
+            "policy_version_id": args.policy_version,
+            "plan_id": args.plan,
+            "created_at": args.created_at,
+            "recorded_at": args.recorded_at,
+        }
+        arguments.update({key: value for key, value in optional.items() if value is not None})
+        output = registry.execute(
+            "decision.create", arguments, permissions={"decision:write"}, confirmed=True
+        )
+    elif args.command == "decision" and args.action == "list":
+        arguments = {} if args.portfolio is None else {"portfolio_id": args.portfolio}
+        output = registry.execute("decision.list", arguments, permissions={"decision:read"})
+    elif args.command == "decision" and args.action == "get":
+        output = registry.execute(
+            "decision.get", {"decision_id": args.decision}, permissions={"decision:read"}
+        )
+    elif args.command == "decision" and args.action in {"link-policy", "link-evidence", "link-transaction", "review"}:
+        if args.action == "link-policy":
+            capability = "decision.link_policy"
+            arguments = {"decision_id": args.decision, "policy_version_id": args.policy_version, "link_type": args.link_type}
+            permissions = {"decision:write", "policy:read"}
+        elif args.action == "link-evidence":
+            capability = "decision.link_evidence"
+            arguments = {"decision_id": args.decision, "evidence_id": args.evidence, "evidence_kind": args.kind, "relation": args.relation}
+            permissions = {"decision:write", "research:read"}
+        elif args.action == "link-transaction":
+            capability = "decision.link_transaction"
+            arguments = {"decision_id": args.decision, "transaction_id": args.transaction, "relation": args.relation}
+            if args.linked_at is not None:
+                arguments["linked_at"] = args.linked_at
+            permissions = {"decision:write", "ledger:read"}
+        else:
+            capability = "decision.review"
+            arguments = {"decision_id": args.decision, "review_type": args.review_type, "notes": args.notes}
+            if args.score is not None:
+                arguments["score"] = args.score
+            if args.reviewed_at is not None:
+                arguments["reviewed_at"] = args.reviewed_at
+            permissions = {"decision:write"}
+        output = registry.execute(capability, arguments, permissions=permissions, confirmed=True)
     elif args.command == "system" and args.action == "check":
         output = registry.execute(
             "system.check_integrity", permissions={"system:read"}

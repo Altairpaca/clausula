@@ -380,6 +380,113 @@ CREATE TRIGGER plan_constraints_reject_delete BEFORE DELETE ON plan_constraints
 BEGIN SELECT RAISE(ABORT, 'plan_constraints is append-only'); END;
 """,
     ),
+    Migration(
+        8,
+        "decision_memory_links_and_reviews",
+        """
+CREATE TABLE decisions(
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL REFERENCES portfolios(id),
+    title TEXT NOT NULL,
+    intent TEXT NOT NULL CHECK(intent IN ('trade','non_trade')),
+    rationale TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    known_as_of TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    policy_version_id TEXT REFERENCES policy_versions(id),
+    plan_id TEXT REFERENCES plans(id),
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE decision_alternatives(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    alternative_key TEXT NOT NULL,
+    description TEXT NOT NULL,
+    selected INTEGER NOT NULL CHECK(selected IN (0,1)),
+    UNIQUE(decision_id, alternative_key)
+);
+CREATE TABLE decision_policy_links(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    policy_version_id TEXT NOT NULL REFERENCES policy_versions(id),
+    link_type TEXT NOT NULL,
+    UNIQUE(decision_id, policy_version_id, link_type)
+);
+CREATE TABLE decision_evidence_links(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    evidence_id TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL,
+    relation TEXT NOT NULL CHECK(relation IN ('supports','contradicts','context')),
+    UNIQUE(decision_id, evidence_id, relation)
+);
+CREATE TABLE decision_transaction_links(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    relation TEXT NOT NULL,
+    linked_at TEXT NOT NULL,
+    UNIQUE(decision_id, transaction_id, relation)
+);
+CREATE TABLE decision_reviews(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    review_type TEXT NOT NULL CHECK(review_type IN ('process','outcome')),
+    score INTEGER CHECK(score IS NULL OR score BETWEEN 1 AND 5),
+    notes TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL
+);
+CREATE TABLE decision_statements(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    kind TEXT NOT NULL CHECK(kind IN ('assumption','expected_outcome','invalidation_condition')),
+    statement_key TEXT NOT NULL,
+    text TEXT NOT NULL,
+    UNIQUE(decision_id, kind, statement_key)
+);
+CREATE TABLE decision_review_schedules(
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES decisions(id),
+    review_type TEXT NOT NULL CHECK(review_type IN ('process','outcome')),
+    due_at TEXT NOT NULL,
+    UNIQUE(decision_id, review_type, due_at)
+);
+CREATE INDEX decisions_temporal ON decisions(portfolio_id, as_of, known_as_of, created_at);
+CREATE TRIGGER decisions_reject_update BEFORE UPDATE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions is append-only'); END;
+CREATE TRIGGER decisions_reject_delete BEFORE DELETE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions is append-only'); END;
+CREATE TRIGGER decision_alternatives_reject_update BEFORE UPDATE ON decision_alternatives
+BEGIN SELECT RAISE(ABORT, 'decision_alternatives is append-only'); END;
+CREATE TRIGGER decision_alternatives_reject_delete BEFORE DELETE ON decision_alternatives
+BEGIN SELECT RAISE(ABORT, 'decision_alternatives is append-only'); END;
+CREATE TRIGGER decision_policy_links_reject_update BEFORE UPDATE ON decision_policy_links
+BEGIN SELECT RAISE(ABORT, 'decision_policy_links is append-only'); END;
+CREATE TRIGGER decision_policy_links_reject_delete BEFORE DELETE ON decision_policy_links
+BEGIN SELECT RAISE(ABORT, 'decision_policy_links is append-only'); END;
+CREATE TRIGGER decision_evidence_links_reject_update BEFORE UPDATE ON decision_evidence_links
+BEGIN SELECT RAISE(ABORT, 'decision_evidence_links is append-only'); END;
+CREATE TRIGGER decision_evidence_links_reject_delete BEFORE DELETE ON decision_evidence_links
+BEGIN SELECT RAISE(ABORT, 'decision_evidence_links is append-only'); END;
+CREATE TRIGGER decision_transaction_links_reject_update BEFORE UPDATE ON decision_transaction_links
+BEGIN SELECT RAISE(ABORT, 'decision_transaction_links is append-only'); END;
+CREATE TRIGGER decision_transaction_links_reject_delete BEFORE DELETE ON decision_transaction_links
+BEGIN SELECT RAISE(ABORT, 'decision_transaction_links is append-only'); END;
+CREATE TRIGGER decision_reviews_reject_update BEFORE UPDATE ON decision_reviews
+BEGIN SELECT RAISE(ABORT, 'decision_reviews is append-only'); END;
+CREATE TRIGGER decision_reviews_reject_delete BEFORE DELETE ON decision_reviews
+BEGIN SELECT RAISE(ABORT, 'decision_reviews is append-only'); END;
+CREATE TRIGGER decision_statements_reject_update BEFORE UPDATE ON decision_statements
+BEGIN SELECT RAISE(ABORT, 'decision_statements is append-only'); END;
+CREATE TRIGGER decision_statements_reject_delete BEFORE DELETE ON decision_statements
+BEGIN SELECT RAISE(ABORT, 'decision_statements is append-only'); END;
+CREATE TRIGGER decision_review_schedules_reject_update BEFORE UPDATE ON decision_review_schedules
+BEGIN SELECT RAISE(ABORT, 'decision_review_schedules is append-only'); END;
+CREATE TRIGGER decision_review_schedules_reject_delete BEFORE DELETE ON decision_review_schedules
+BEGIN SELECT RAISE(ABORT, 'decision_review_schedules is append-only'); END;
+""",
+    ),
 )
 
 

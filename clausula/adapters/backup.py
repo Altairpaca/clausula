@@ -51,6 +51,14 @@ EXPORT_TABLES = (
     "plan_actions",
     "plan_projected_states",
     "plan_constraints",
+    "decisions",
+    "decision_alternatives",
+    "decision_policy_links",
+    "decision_evidence_links",
+    "decision_transaction_links",
+    "decision_reviews",
+    "decision_statements",
+    "decision_review_schedules",
 )
 
 

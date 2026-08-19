@@ -287,7 +287,7 @@ def test_planning_backup_export_and_clean_rebuild(tmp_path):
     store.export(export)
     assert b'"table":"plan_projected_states"' in export.read_bytes()
     bundle = tmp_path / "planning.zip"
-    assert store.backup_bundle(bundle)["schema_version"] == 7
+    assert store.backup_bundle(bundle)["schema_version"] == 8
     restored = Store(tmp_path / "restored")
     restored.restore_bundle(bundle)
     assert restored.plan(created["plan"]["id"])["name"] == "Rebuild plan"

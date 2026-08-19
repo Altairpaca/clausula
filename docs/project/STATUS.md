@@ -4,8 +4,8 @@
 - Repository: `/home/altair/projects/clausula`
 - Branch: `main`
 - Last frozen implementation: `feat: complete versioned investment policy vertical slice` (current `HEAD`)
-- Current phase: M5 Decision Intelligence
-- M4 Policy as Code and M4.5 Planning/Cash Allocation are frozen.
+- Current phase: M6 Research and Evidence Graph
+- M4 Policy as Code, M4.5 Planning/Cash Allocation, and M5 Decision Intelligence are frozen.
 
 ## Frozen Milestones
 
@@ -126,6 +126,17 @@ docs/reference/planning.md
 M4.5 verification: 85 tests passed; compile, diff, and YAML checks passed. The final wheel built
 successfully, and an isolated installed CLI discovered 25 capabilities and executed
 `planning.compare`, `planning.create`, and `planning.get` successfully.
+
+### M5 Decision Intelligence
+
+M5 frozen implementation includes immutable trade/non-trade Decisions, Alternatives,
+Assumptions, ExpectedOutcomes, InvalidationConditions, review schedules,
+Policy/Evidence/Transaction links, and separate process/outcome reviews. Schema
+v8, canonical export, backup/restore, clean rebuild, registry, CLI, SDK, and
+permission/confirmation/dry-run contracts cover the lifecycle. Transaction
+links never create or mutate Ledger facts.
+
+Accepted reference: `docs/adr/0007-decision-memory-and-review.md`.
 
 ## Known Cross-Cutting Risks
 

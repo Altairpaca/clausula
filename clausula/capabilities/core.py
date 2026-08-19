@@ -8,6 +8,7 @@ from clausula.application import (
     LedgerService,
     MarketService,
     PlanningService,
+    DecisionService,
     PolicyService,
     PortfolioService,
 )
@@ -71,6 +72,20 @@ def _planning_scenarios_schema() -> dict[str, Any]:
     }
 
 
+def _decision_alternatives_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "items": object_schema(
+            {"key": STRING, "description": STRING, "selected": {"type": "boolean"}},
+            required=("key", "description"),
+        ),
+    }
+
+
+DECISION_STATEMENTS = {"type": "array", "items": object_schema({"key": STRING, "text": STRING}, required=("key", "text"))}
+REVIEW_SCHEDULE = {"type": "array", "items": object_schema({"review_type": {"type": "string", "enum": ["process", "outcome"]}, "due_at": STRING}, required=("review_type", "due_at"))}
+
+
 def _state_schema() -> dict[str, Any]:
     return object_schema(
         {
@@ -98,6 +113,7 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
     portfolios = PortfolioService(repository)
     policies = PolicyService(repository)
     planning = PlanningService(repository)
+    decisions = DecisionService(repository)
     registry = CapabilityRegistry()
     registry.register(
         CapabilitySpec(
@@ -683,6 +699,177 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
             "Returns persisted deterministic results and does not recompute or mutate the Ledger.",
         ),
         lambda plan_id: planning.get(plan_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.create",
+            "Create an immutable trade or non-trade Decision with alternatives and historical context.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "title": STRING,
+                    "intent": {"type": "string", "enum": ["trade", "non_trade"]},
+                    "rationale": STRING,
+                    "as_of": STRING,
+                    "known_as_of": NULLABLE_STRING,
+                    "policy_version_id": NULLABLE_STRING,
+                    "plan_id": NULLABLE_STRING,
+                    "alternatives": _decision_alternatives_schema(),
+                    "assumptions": DECISION_STATEMENTS,
+                    "expected_outcomes": DECISION_STATEMENTS,
+                    "invalidation_conditions": DECISION_STATEMENTS,
+                    "review_schedule": REVIEW_SCHEDULE,
+                    "created_at": NULLABLE_STRING,
+                    "recorded_at": NULLABLE_STRING,
+                },
+                required=("portfolio_id", "title", "intent", "rationale", "as_of"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("decision:write",),
+            True,
+            "Stores rationale and alternatives with immutable provenance and audit.",
+        ),
+        lambda portfolio_id, title, intent, rationale, as_of, known_as_of=None, policy_version_id=None, plan_id=None, alternatives=(), assumptions=(), expected_outcomes=(), invalidation_conditions=(), review_schedule=(), created_at=None, recorded_at=None: decisions.create(
+            portfolio_id,
+            title,
+            intent,
+            rationale,
+            as_of,
+            known_as_of=known_as_of,
+            policy_version_id=policy_version_id,
+            plan_id=plan_id,
+            alternatives=alternatives,
+            assumptions=assumptions,
+            expected_outcomes=expected_outcomes,
+            invalidation_conditions=invalidation_conditions,
+            review_schedule=review_schedule,
+            created_at=created_at,
+            recorded_at=recorded_at,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.list",
+            "List immutable Decisions for an optional Portfolio.",
+            object_schema({"portfolio_id": NULLABLE_STRING}),
+            {"type": "array", "items": {"type": "object"}},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("decision:read",),
+            False,
+            "Returns decision intent, temporal context, and policy/plan references.",
+        ),
+        lambda portfolio_id=None: decisions.list(portfolio_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.get",
+            "Read a Decision and all append-only links and reviews.",
+            object_schema({"decision_id": STRING}, required=("decision_id",)),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("decision:read",),
+            False,
+            "Separates process and outcome reviews and never rewrites rationale.",
+        ),
+        lambda decision_id: decisions.get(decision_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.link_policy",
+            "Append a PolicyVersion link to a Decision.",
+            object_schema(
+                {"decision_id": STRING, "policy_version_id": STRING, "link_type": STRING},
+                required=("decision_id", "policy_version_id"),
+            ),
+            object_schema({"link_id": STRING}, required=("link_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("decision:write", "policy:read"),
+            True,
+            "Links policy context append-only with provenance and audit.",
+        ),
+        lambda decision_id, policy_version_id, link_type="governs": {
+            "link_id": decisions.link_policy(decision_id, policy_version_id, link_type)
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.link_evidence",
+            "Append supporting, contradicting, or contextual evidence to a Decision.",
+            object_schema(
+                {
+                    "decision_id": STRING,
+                    "evidence_id": STRING,
+                    "evidence_kind": STRING,
+                    "relation": {"type": "string", "enum": ["supports", "contradicts", "context"]},
+                },
+                required=("decision_id", "evidence_id"),
+            ),
+            object_schema({"link_id": STRING}, required=("link_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("decision:write", "research:read"),
+            True,
+            "Evidence is linked without pretending it is canonical financial truth.",
+        ),
+        lambda decision_id, evidence_id, evidence_kind="research", relation="supports": {
+            "link_id": decisions.link_evidence(decision_id, evidence_id, evidence_kind, relation)
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.link_transaction",
+            "Append the later actual transaction link without rewriting a Decision.",
+            object_schema(
+                {"decision_id": STRING, "transaction_id": STRING, "relation": STRING, "linked_at": NULLABLE_STRING},
+                required=("decision_id", "transaction_id"),
+            ),
+            object_schema({"link_id": STRING}, required=("link_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("decision:write", "ledger:read"),
+            True,
+            "Links executed facts append-only; it never creates or edits a Transaction.",
+        ),
+        lambda decision_id, transaction_id, relation="executed", linked_at=None: {
+            "link_id": decisions.link_transaction(decision_id, transaction_id, relation, linked_at)
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "decision.review",
+            "Append a process-quality or outcome-quality Decision review.",
+            object_schema(
+                {
+                    "decision_id": STRING,
+                    "review_type": {"type": "string", "enum": ["process", "outcome"]},
+                    "score": {"type": ["integer", "null"]},
+                    "notes": STRING,
+                    "reviewed_at": NULLABLE_STRING,
+                },
+                required=("decision_id", "review_type", "notes"),
+            ),
+            object_schema({"review_id": STRING}, required=("review_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("decision:write",),
+            True,
+            "Process and outcome quality remain separate immutable records.",
+        ),
+        lambda decision_id, review_type, notes, score=None, reviewed_at=None: {
+            "review_id": decisions.review(decision_id, review_type, score, notes, reviewed_at=reviewed_at)
+        },
     )
 
     system_methods = {
