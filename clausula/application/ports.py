@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
-from clausula.domain import InstrumentIdentifier, Transaction
+from clausula.domain import CorporateAction, FxConversion, InstrumentIdentifier, SecurityTransfer, Transaction
 
 
 @runtime_checkable
@@ -21,6 +21,8 @@ class LedgerRepository(Protocol):
         asset_type: str = "stock",
         currency: str = "USD",
     ) -> str: ...
+
+    def instrument_details(self, instrument_id: str) -> Mapping[str, Any]: ...
 
 
     def artifact(self, path: str | Path) -> tuple[str, str]: ...
@@ -56,11 +58,33 @@ class LedgerRepository(Protocol):
         destination_transaction: Transaction,
     ) -> None: ...
 
-    def transactions(self, account_id: str, as_of: str | None = None) -> list[Mapping[str, Any]]: ...
+    def add_fx_conversion(self, transaction: Transaction, conversion: FxConversion) -> None: ...
+
+    def add_security_transfer(
+        self,
+        transfer: SecurityTransfer,
+        source_transaction: Transaction,
+        destination_transaction: Transaction,
+    ) -> None: ...
+
+    def add_corporate_action(
+        self, transaction: Transaction, action: CorporateAction
+    ) -> None: ...
+
+    def transactions(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        known_as_of: str | None = None,
+    ) -> list[Mapping[str, Any]]: ...
 
     def transaction(self, transaction_id: str) -> Mapping[str, Any] | None: ...
 
     def legs(self, transaction_id: str) -> list[Mapping[str, Any]]: ...
+
+    def transaction_metadata(self, transaction_id: str) -> Mapping[str, Any]: ...
+
+    def corporate_action_transaction(self, action_id: str) -> str: ...
 
     def record_reconciliation(
         self,
@@ -85,3 +109,9 @@ class CoreRepository(LedgerRepository, Protocol):
     def export(self, destination: str | Path) -> str: ...
 
     def backup_bundle(self, destination: str | Path) -> dict[str, Any]: ...
+
+    def rebuild_catalog(self) -> Mapping[str, Any]: ...
+
+    def imported_transaction_mapping(
+        self, account_id: str, artifact_id: str
+    ) -> Mapping[str, str]: ...

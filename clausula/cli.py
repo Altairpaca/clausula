@@ -26,6 +26,9 @@ def main(argv=None):
     transactions = ledger_actions.add_parser("transactions")
     transactions.add_argument("account")
     transactions.add_argument("--as-of")
+    cost_basis = ledger_actions.add_parser("cost-basis")
+    cost_basis.add_argument("account")
+    cost_basis.add_argument("--as-of")
 
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
@@ -76,6 +79,13 @@ def main(argv=None):
             arguments["as_of"] = args.as_of
         output = registry.execute(
             "ledger.get_transactions", arguments, permissions={"ledger:read"}
+        )
+    elif args.command == "ledger" and args.action == "cost-basis":
+        arguments = {"account_id": args.account}
+        if args.as_of is not None:
+            arguments["as_of"] = args.as_of
+        output = registry.execute(
+            "ledger.get_cost_basis", arguments, permissions={"portfolio:read"}
         )
     elif args.command == "system" and args.action == "check":
         output = registry.execute(

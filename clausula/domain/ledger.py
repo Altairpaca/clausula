@@ -106,6 +106,7 @@ class Transaction:
     import_batch_id: str
     legs: tuple[TransactionLeg, ...]
     corrects_transaction_id: str | None = None
+    source_sequence: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", require_uuid(self.id, "transaction id"))
@@ -132,6 +133,10 @@ class Transaction:
             )
             if self.type != "correction":
                 raise ValueError("only correction transactions may reference a corrected transaction")
+        if isinstance(self.source_sequence, bool) or not isinstance(self.source_sequence, int):
+            raise ValueError("source_sequence must be an integer")
+        if self.source_sequence < 0:
+            raise ValueError("source_sequence must not be negative")
 
 
 @dataclass(frozen=True)
@@ -149,3 +154,139 @@ class ReconciliationResult:
     as_of: str
     differences: tuple[dict[str, Any], ...]
     record_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FxConversion:
+    transaction_id: str
+    from_currency: str
+    to_currency: str
+    from_amount: Decimal
+    to_amount: Decimal
+    rate: Decimal
+    fee: Decimal = Decimal(0)
+    fee_currency: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "transaction_id", require_uuid(self.transaction_id, "transaction_id"))
+        object.__setattr__(self, "from_currency", _required_text(self.from_currency, "from_currency").upper())
+        object.__setattr__(self, "to_currency", _required_text(self.to_currency, "to_currency").upper())
+        if self.from_currency == self.to_currency:
+            raise ValueError("FX currencies must be distinct")
+        object.__setattr__(self, "from_amount", dec(self.from_amount))
+        object.__setattr__(self, "to_amount", dec(self.to_amount))
+        object.__setattr__(self, "rate", dec(self.rate))
+        object.__setattr__(self, "fee", dec(self.fee))
+        if self.from_amount <= 0 or self.to_amount <= 0 or self.rate <= 0:
+            raise ValueError("FX amounts and rate must be positive")
+        if self.fee < 0:
+            raise ValueError("FX fee must not be negative")
+        if self.rate != self.to_amount / self.from_amount:
+            raise ValueError("FX rate must equal to_amount / from_amount")
+        if self.fee:
+            normalized = _required_text(self.fee_currency or "", "fee_currency").upper()
+            if normalized not in {self.from_currency, self.to_currency}:
+                raise ValueError("FX fee currency must be one of the converted currencies")
+            object.__setattr__(self, "fee_currency", normalized)
+        elif self.fee_currency is not None:
+            object.__setattr__(self, "fee_currency", self.fee_currency.upper())
+
+
+@dataclass(frozen=True)
+class SecurityTransfer:
+    id: str
+    source_transaction_id: str
+    destination_transaction_id: str
+    instrument_id: str
+    quantity: Decimal
+    carried_basis: Decimal
+    currency: str
+    allocations: tuple[LotTransferAllocation, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field in ("id", "source_transaction_id", "destination_transaction_id", "instrument_id"):
+            object.__setattr__(self, field, require_uuid(getattr(self, field), field))
+        object.__setattr__(self, "quantity", dec(self.quantity))
+        object.__setattr__(self, "carried_basis", dec(self.carried_basis))
+        object.__setattr__(self, "currency", _required_text(self.currency, "currency").upper())
+        if self.quantity <= 0:
+            raise ValueError("security transfer quantity must be positive")
+        if self.carried_basis < 0:
+            raise ValueError("carried basis must not be negative")
+        object.__setattr__(self, "allocations", tuple(self.allocations))
+        if self.allocations:
+            if sum((item.quantity for item in self.allocations), Decimal(0)) != self.quantity:
+                raise ValueError("transfer allocation quantities must equal transferred quantity")
+            if sum((item.basis for item in self.allocations), Decimal(0)) != self.carried_basis:
+                raise ValueError("transfer allocation basis must equal carried basis")
+            if any(item.currency != self.currency for item in self.allocations):
+                raise ValueError("transfer allocation currency mismatch")
+
+
+@dataclass(frozen=True)
+class LotTransferAllocation:
+    source_transaction_id: str
+    acquired_at: str
+    quantity: Decimal
+    basis: Decimal
+    currency: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_transaction_id",
+            require_uuid(self.source_transaction_id, "source_transaction_id"),
+        )
+        object.__setattr__(self, "acquired_at", canonical_timestamp(self.acquired_at))
+        object.__setattr__(self, "quantity", dec(self.quantity))
+        object.__setattr__(self, "basis", dec(self.basis))
+        object.__setattr__(self, "currency", _required_text(self.currency, "currency").upper())
+        if self.quantity <= 0 or self.basis < 0:
+            raise ValueError("lot transfer quantity must be positive and basis nonnegative")
+
+
+@dataclass(frozen=True)
+class CorporateAction:
+    id: str
+    transaction_id: str
+    instrument_id: str
+    action_type: str
+    numerator: Decimal
+    denominator: Decimal
+
+    def __post_init__(self) -> None:
+        for field in ("id", "transaction_id", "instrument_id"):
+            object.__setattr__(self, field, require_uuid(getattr(self, field), field))
+        object.__setattr__(self, "action_type", _required_text(self.action_type, "action_type").lower())
+        object.__setattr__(self, "numerator", dec(self.numerator))
+        object.__setattr__(self, "denominator", dec(self.denominator))
+        if self.action_type != "split":
+            raise ValueError("unsupported corporate action")
+        if self.numerator <= 0 or self.denominator <= 0:
+            raise ValueError("corporate action ratio must be positive")
+
+    @property
+    def ratio(self) -> Decimal:
+        return self.numerator / self.denominator
+
+
+@dataclass(frozen=True)
+class ReconciliationObservation:
+    kind: str
+    value: Decimal
+    currency: str | None = None
+    instrument_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _required_text(self.kind, "kind").lower())
+        object.__setattr__(self, "value", dec(self.value))
+        if self.kind == "cash":
+            object.__setattr__(self, "currency", _required_text(self.currency or "", "currency").upper())
+            if self.instrument_id is not None:
+                raise ValueError("cash observation cannot reference an instrument")
+        elif self.kind == "position":
+            object.__setattr__(self, "instrument_id", require_uuid(self.instrument_id or "", "instrument_id"))
+            if self.currency is not None:
+                raise ValueError("position observation cannot reference a currency")
+        else:
+            raise ValueError("observation kind must be cash or position")

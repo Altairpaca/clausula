@@ -117,6 +117,69 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
         ),
         lambda account_id, as_of=None: service.transactions(account_id, as_of),
     )
+    registry.register(
+        CapabilitySpec(
+            "ledger.get_cost_basis",
+            "Replay FIFO lots and realized gains without market-price assumptions.",
+            object_schema(
+                {"account_id": STRING, "as_of": NULLABLE_STRING},
+                required=("account_id",),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("portfolio:read",),
+            False,
+            "Every open lot and realized match links to source transaction provenance.",
+        ),
+        lambda account_id, as_of=None: service.cost_basis(account_id, as_of),
+    )
+    registry.register(
+        CapabilitySpec(
+            "ledger.record_fx_conversion",
+            "Record a balanced two-currency FX conversion with explicit rate and fee.",
+            object_schema(
+                {
+                    "account_id": STRING,
+                    "from_currency": STRING,
+                    "to_currency": STRING,
+                    "from_amount": STRING,
+                    "to_amount": STRING,
+                    "effective_at": STRING,
+                    "fee": STRING,
+                    "fee_currency": NULLABLE_STRING,
+                },
+                required=(
+                    "account_id",
+                    "from_currency",
+                    "to_currency",
+                    "from_amount",
+                    "to_amount",
+                    "effective_at",
+                ),
+            ),
+            object_schema({"transaction_id": STRING}, required=("transaction_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("ledger:write",),
+            True,
+            "Creates a provenance artifact, import batch, balanced transaction, and audit events.",
+        ),
+        lambda account_id, from_currency, to_currency, from_amount, to_amount, effective_at, fee="0", fee_currency=None: {
+            "transaction_id": service.record_fx_conversion(
+                account_id,
+                from_currency,
+                to_currency,
+                from_amount,
+                to_amount,
+                effective_at,
+                fee=fee,
+                fee_currency=fee_currency,
+            )
+        },
+    )
 
     system_methods = {
         "system.check_integrity": (
