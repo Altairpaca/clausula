@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Mapping
 
+from .ports import LedgerRepository
+
 from clausula.domain import (
     InstrumentIdentifier,
     ReconciliationResult,
@@ -30,11 +32,11 @@ class ImportValidationError(ValueError):
 
 
 class LedgerService:
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, repository: LedgerRepository):
+        self.repository = repository
 
     def create_account(self, institution: str, name: str) -> str:
-        return self.store.create_account(institution, name)
+        return self.repository.create_account(institution, name)
 
     def resolve_instrument(
         self,
@@ -45,13 +47,13 @@ class LedgerService:
         *,
         scheme: str = "ticker",
     ) -> str:
-        return self.store.instrument(
+        return self.repository.instrument(
             InstrumentIdentifier(ticker, scheme), name, asset_type, currency
         )
 
     def import_csv(self, account_id: str, path: str | Path) -> dict[str, str | int]:
-        self.store.require_account(account_id)
-        artifact_id, digest = self.store.artifact(path)
+        self.repository.require_account(account_id)
+        artifact_id, digest = self.repository.artifact(path)
         batch_id = new_id()
         recorded_at = now()
         parsed: list[tuple[Transaction, str]] = []
@@ -83,7 +85,7 @@ class LedgerService:
                     raise ImportValidationError(row_number, str(exc)) from exc
                 parsed.append((transaction, external_id))
 
-        inserted = self.store.add_import(
+        inserted = self.repository.add_import(
             batch_id,
             artifact_id,
             parsed,
@@ -208,15 +210,15 @@ class LedgerService:
 
     def transactions(self, account_id: str, as_of: str | None = None) -> list[dict]:
         return [
-            dict(row) | {"legs": [dict(leg) for leg in self.store.legs(row["id"])]}
-            for row in self.store.transactions(account_id, as_of)
+            dict(row) | {"legs": [dict(leg) for leg in self.repository.legs(row["id"])]}
+            for row in self.repository.transactions(account_id, as_of)
         ]
 
     def state(self, account_id: str, as_of: str | None = None) -> dict:
         positions: dict[str, Decimal] = {}
         cash_by_currency: dict[str, Decimal] = {}
-        for transaction in self.store.transactions(account_id, as_of):
-            for leg in self.store.legs(transaction["id"]):
+        for transaction in self.repository.transactions(account_id, as_of):
+            for leg in self.repository.legs(transaction["id"]):
                 if leg["leg_type"] == "cash":
                     currency = leg["currency"]
                     cash_by_currency[currency] = cash_by_currency.get(currency, Decimal(0)) + dec(leg["amount"])
@@ -304,14 +306,14 @@ class LedgerService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        artifact_id, _ = self.store.virtual_artifact("manual://reconciliation", provenance_content)
-        batch_id = self.store.import_batch(
+        artifact_id, _ = self.repository.virtual_artifact("manual://reconciliation", provenance_content)
+        batch_id = self.repository.import_batch(
             artifact_id,
             adapter_name="manual-reconciliation",
             adapter_version="1",
             schema_version="1",
         )
-        record_id = self.store.record_reconciliation(
+        record_id = self.repository.record_reconciliation(
             account_id=account_id,
             effective_at=as_of,
             known_at=known_at or now(),
@@ -338,7 +340,7 @@ class LedgerService:
         corrects_transaction_id: str | None = None,
         known_at: str | None = None,
     ) -> str:
-        self.store.require_account(account_id)
+        self.repository.require_account(account_id)
         if not reason.strip():
             raise ValueError("correction reason is required")
         self._require_amount_conservation(list(legs))
@@ -352,8 +354,8 @@ class LedgerService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        artifact_id, _ = self.store.virtual_artifact("manual://ledger-correction", provenance_content)
-        batch_id = self.store.import_batch(
+        artifact_id, _ = self.repository.virtual_artifact("manual://ledger-correction", provenance_content)
+        batch_id = self.repository.import_batch(
             artifact_id,
             adapter_name="manual-correction",
             adapter_version="1",
@@ -373,7 +375,7 @@ class LedgerService:
             tuple(legs),
             corrects_transaction_id,
         )
-        self.store.add_transaction(transaction)
+        self.repository.add_transaction(transaction)
         return transaction.id
 
     def record_cash_transfer(
@@ -388,8 +390,8 @@ class LedgerService:
         known_at: str | None = None,
         description: str = "account transfer",
     ) -> dict[str, str]:
-        self.store.require_account(source_account_id)
-        self.store.require_account(destination_account_id)
+        self.repository.require_account(source_account_id)
+        self.repository.require_account(destination_account_id)
         if source_account_id == destination_account_id:
             raise ValueError("transfer accounts must be distinct")
         transfer_amount = dec(amount)
@@ -415,8 +417,8 @@ class LedgerService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        artifact_id, _ = self.store.virtual_artifact("manual://account-transfer", provenance)
-        batch_id = self.store.import_batch(
+        artifact_id, _ = self.repository.virtual_artifact("manual://account-transfer", provenance)
+        batch_id = self.repository.import_batch(
             artifact_id,
             adapter_name="manual-transfer",
             adapter_version="1",
@@ -494,7 +496,7 @@ class LedgerService:
             batch_id,
             destination_legs,
         )
-        self.store.add_transfer(transfer_id, source_transaction, destination_transaction)
+        self.repository.add_transfer(transfer_id, source_transaction, destination_transaction)
         return {
             "transfer_id": transfer_id,
             "source_transaction_id": source_transaction.id,

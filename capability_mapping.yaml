@@ -1,4 +1,4 @@
-version: 3
+version: 4
 status: architecture_mapping
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
@@ -61,6 +61,8 @@ canonical_m0_m2:
   - system.check_integrity
   - system.backup
   - system.restore
+  - system.export
+  - system.verify_audit
 
 implementation_status:
   account.create: implemented
@@ -75,3 +77,16 @@ implementation_status:
   system.check_integrity: implemented
   system.backup: implemented_database_only
   system.restore: implemented_database_only
+  system.export: implemented_canonical_jsonl
+  system.verify_audit: implemented_hash_chain
+
+platform_contract:
+  registry: implemented
+  input_output_schema: implemented_minimal_json_schema
+  permissions: implemented
+  confirmation: implemented
+  dry_run: implemented
+  cli_projection: implemented
+  python_projection: implemented
+  http_projection: pending_m7
+  mcp_projection: pending_m10
