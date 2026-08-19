@@ -12,6 +12,14 @@ from clausula.domain import (
     MarketPrice,
     InvestmentPolicy,
     CandidateAction,
+    Decision,
+    DecisionAlternative,
+    DecisionEvidenceLink,
+    DecisionPolicyLink,
+    DecisionReview,
+    DecisionReviewSchedule,
+    DecisionStatement,
+    DecisionTransactionLink,
     Plan,
     PlanScenario,
     ProjectedState,
@@ -225,3 +233,25 @@ class CoreRepository(LedgerRepository, Protocol):
     def plan_constraints(self, scenario_id: str) -> list[Mapping[str, Any]]: ...
 
     def plan_projected_state(self, scenario_id: str) -> Mapping[str, Any]: ...
+
+    def add_decision(
+        self, decision: Decision, alternatives: Iterable[DecisionAlternative],
+        statements: Iterable[DecisionStatement] = (),
+        review_schedules: Iterable[DecisionReviewSchedule] = (),
+    ) -> None: ...
+
+    def decision(self, decision_id: str) -> Mapping[str, Any]: ...
+
+    def decisions(self, portfolio_id: str | None = None) -> list[Mapping[str, Any]]: ...
+
+    def decision_alternatives(self, decision_id: str) -> list[Mapping[str, Any]]: ...
+
+    def add_decision_policy_link(self, link: DecisionPolicyLink) -> None: ...
+
+    def add_decision_evidence_link(self, link: DecisionEvidenceLink) -> None: ...
+
+    def add_decision_transaction_link(self, link: DecisionTransactionLink) -> None: ...
+
+    def add_decision_review(self, review: DecisionReview) -> None: ...
+
+    def decision_links(self, decision_id: str) -> Mapping[str, list[Mapping[str, Any]]]: ...

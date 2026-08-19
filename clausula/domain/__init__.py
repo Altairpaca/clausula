@@ -34,6 +34,16 @@ from .planning import (
     ProjectedState,
     UnresolvedConstraint,
 )
+from .decision import (
+    Decision,
+    DecisionAlternative,
+    DecisionEvidenceLink,
+    DecisionPolicyLink,
+    DecisionReview,
+    DecisionReviewSchedule,
+    DecisionStatement,
+    DecisionTransactionLink,
+)
 from .policy import (
     InvestmentPolicy,
     PolicyEvaluation,
@@ -54,6 +64,14 @@ __all__ = [
     "PlanScenario",
     "CandidateAction",
     "ProjectedState",
+    "Decision",
+    "DecisionAlternative",
+    "DecisionEvidenceLink",
+    "DecisionPolicyLink",
+    "DecisionReview",
+    "DecisionReviewSchedule",
+    "DecisionStatement",
+    "DecisionTransactionLink",
     "UnresolvedConstraint",
     "InvestmentPolicy",
     "PolicyEvaluation",

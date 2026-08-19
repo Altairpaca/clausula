@@ -9,6 +9,7 @@ from clausula.domain import TransactionLeg, canonical_decimal, dec
 from .ledger import MANUAL_EVENT_FORMAT, LedgerService
 from .market import MarketService
 from .planning import PLANNING_EVENT_FORMAT, PlanningService
+from .decision import DECISION_EVENT_FORMAT, DecisionService
 from .policy import POLICY_EVENT_FORMAT, PolicyService
 from .portfolio import PORTFOLIO_EVENT_FORMAT, PortfolioService
 from .ports import CoreRepository
@@ -33,6 +34,7 @@ class LedgerRebuilder:
             or target_catalog["portfolios"]
             or target_catalog.get("policies")
             or target_catalog.get("plans")
+            or target_catalog.get("decisions")
             or target_catalog["imports"]
         ):
             raise RebuildError("target repository must be empty")
@@ -41,6 +43,7 @@ class LedgerRebuilder:
         target_portfolios = PortfolioService(self.target)
         target_policies = PolicyService(self.target)
         target_planning = PlanningService(self.target)
+        target_decisions = DecisionService(self.target)
         account_mapping: dict[str, str] = {}
         transaction_mapping: dict[str, str] = {}
         instrument_mapping: dict[str, str] = {}
@@ -50,6 +53,7 @@ class LedgerRebuilder:
         policy_rule_mapping: dict[str, str] = {}
         plan_mapping: dict[str, str] = {}
         plan_scenario_mapping: dict[str, str] = {}
+        decision_mapping: dict[str, str] = {}
         for account in catalog["accounts"]:
             account_mapping[account["id"]] = target_service.create_account(
                 account["institution"], account["name"]
@@ -145,6 +149,7 @@ class LedgerRebuilder:
                     PORTFOLIO_EVENT_FORMAT,
                     POLICY_EVENT_FORMAT,
                     PLANNING_EVENT_FORMAT,
+                    DECISION_EVENT_FORMAT,
                 }:
                     raise ValueError("unknown manual event format")
                 if event["format"] == POLICY_EVENT_FORMAT:
@@ -165,6 +170,16 @@ class LedgerRebuilder:
                         policy_version_mapping,
                         instrument_mapping,
                         plan_mapping,
+                    )
+                elif event["format"] == DECISION_EVENT_FORMAT:
+                    result = self._replay_decision_event(
+                        target_decisions,
+                        event,
+                        portfolio_mapping,
+                        policy_version_mapping,
+                        plan_mapping,
+                        transaction_mapping,
+                        decision_mapping,
                     )
                 else:
                     result = self._replay_manual_event(
@@ -374,6 +389,42 @@ class LedgerRebuilder:
                     "target": target_entry,
                 }
             )
+        decision_comparisons = []
+        for source_entry in catalog.get("decisions", []):
+            source_decision = source_entry["decision"]
+            source_id = source_decision["id"]
+            target_id = decision_mapping.get(source_id)
+            matches = target_id is not None
+            target_entry = None
+            if target_id is not None:
+                target_entry = target_decisions.get(target_id)
+                td = target_entry["decision"]
+                matches = matches and (
+                    td["portfolio_id"] == portfolio_mapping[source_decision["portfolio_id"]]
+                    and td["title"] == source_decision["title"]
+                    and td["intent"] == source_decision["intent"]
+                    and td["rationale"] == source_decision["rationale"]
+                    and td["as_of"] == source_decision["as_of"]
+                    and td["known_as_of"] == source_decision["known_as_of"]
+                    and td["created_at"] == source_decision["created_at"]
+                )
+                source_alternatives = self._planning_semantic(source_entry["alternatives"])
+                target_alternatives = self._planning_semantic(target_entry["alternatives"])
+                matches = matches and source_alternatives == target_alternatives
+                matches = matches and len(source_entry["policy_links"]) == len(target_entry["policy_links"])
+                matches = matches and len(source_entry["evidence_links"]) == len(target_entry["evidence_links"])
+                matches = matches and len(source_entry["transaction_links"]) == len(target_entry["transaction_links"])
+                matches = matches and len(source_entry["reviews"]) == len(target_entry["reviews"])
+            consistent = consistent and matches
+            decision_comparisons.append(
+                {
+                    "source_decision_id": source_id,
+                    "target_decision_id": target_id,
+                    "matches": matches,
+                    "source": source_entry,
+                    "target": target_entry,
+                }
+            )
         return {
             "consistent": consistent and not warnings,
             "account_mapping": account_mapping,
@@ -385,11 +436,13 @@ class LedgerRebuilder:
             "policy_rule_mapping": policy_rule_mapping,
             "plan_mapping": plan_mapping,
             "plan_scenario_mapping": plan_scenario_mapping,
+            "decision_mapping": decision_mapping,
             "replayed_imports": replayed,
             "comparisons": comparisons,
             "portfolio_comparisons": portfolio_comparisons,
             "policy_comparisons": policy_comparisons,
             "plan_comparisons": plan_comparisons,
+            "decision_comparisons": decision_comparisons,
             "warnings": warnings,
         }
 
@@ -538,6 +591,74 @@ class LedgerRebuilder:
             raise RebuildError("planning selected a different policy version during rebuild")
         plan_mapping[event["plan_id"]] = target["plan"]["id"]
         return target
+
+    def _replay_decision_event(
+        self,
+        decisions: DecisionService,
+        event: dict[str, Any],
+        portfolio_mapping: dict[str, str],
+        policy_version_mapping: dict[str, str],
+        plan_mapping: dict[str, str],
+        transaction_mapping: dict[str, str],
+        decision_mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        if event.get("schema_version") != "1":
+            raise ValueError("unsupported decision event schema")
+        operation = event["operation"]
+        if operation == "decision.create":
+            target = decisions.create(
+                portfolio_mapping[event["portfolio_id"]],
+                event["title"],
+                event["intent"],
+                event["rationale"],
+                event["as_of"],
+                known_as_of=event["known_as_of"],
+                policy_version_id=None
+                if event.get("policy_version_id") is None
+                else policy_version_mapping[event["policy_version_id"]],
+                plan_id=None
+                if event.get("plan_id") is None
+                else plan_mapping[event["plan_id"]],
+                alternatives=event["alternatives"],
+                assumptions=[{"key": x["key"], "text": x["text"]} for x in event.get("statements", []) if x["kind"] == "assumption"],
+                expected_outcomes=[{"key": x["key"], "text": x["text"]} for x in event.get("statements", []) if x["kind"] == "expected_outcome"],
+                invalidation_conditions=[{"key": x["key"], "text": x["text"]} for x in event.get("statements", []) if x["kind"] == "invalidation_condition"],
+                review_schedule=event.get("review_schedule", []),
+                created_at=event["created_at"],
+                recorded_at=event["recorded_at"],
+            )
+            decision_mapping[event["decision_id"]] = target["decision"]["id"]
+            return target
+        decision_id = decision_mapping[event["decision_id"]]
+        if operation == "decision.link_policy":
+            return {"link_id": decisions.link_policy(
+                decision_id,
+                policy_version_mapping[event["policy_version_id"]],
+                event["link_type"],
+            )}
+        if operation == "decision.link_evidence":
+            return {"link_id": decisions.link_evidence(
+                decision_id,
+                event["evidence_id"],
+                event["evidence_kind"],
+                event["relation"],
+            )}
+        if operation == "decision.link_transaction":
+            return {"link_id": decisions.link_transaction(
+                decision_id,
+                transaction_mapping[event["transaction_id"]],
+                event["relation"],
+                event["linked_at"],
+            )}
+        if operation == "decision.review":
+            return {"review_id": decisions.review(
+                decision_id,
+                event["review_type"],
+                event["score"],
+                event["notes"],
+                reviewed_at=event["reviewed_at"],
+            )}
+        raise ValueError(f"unsupported decision operation: {operation}")
 
     def _map_instrument(
         self,

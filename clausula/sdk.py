@@ -166,6 +166,63 @@ class ClausulaClient:
         return self.invoke(
             "planning.get", {"plan_id": plan_id}, permissions={"planning:read"}
         )
+    def create_decision(self, portfolio_id, title, intent, rationale, as_of, **options):
+        return self.invoke(
+            "decision.create",
+            {
+                "portfolio_id": portfolio_id,
+                "title": title,
+                "intent": intent,
+                "rationale": rationale,
+                "as_of": as_of,
+                **options,
+            },
+            permissions={"decision:write"},
+            confirmed=True,
+        )
+    def list_decisions(self, portfolio_id=None):
+        arguments = {} if portfolio_id is None else {"portfolio_id": portfolio_id}
+        return self.invoke("decision.list", arguments, permissions={"decision:read"})
+    def get_decision(self, decision_id):
+        return self.invoke(
+            "decision.get", {"decision_id": decision_id}, permissions={"decision:read"}
+        )
+    def link_decision_policy(self, decision_id, policy_version_id, link_type="governs"):
+        return self.invoke(
+            "decision.link_policy",
+            {"decision_id": decision_id, "policy_version_id": policy_version_id, "link_type": link_type},
+            permissions={"decision:write", "policy:read"},
+            confirmed=True,
+        )
+    def link_decision_evidence(self, decision_id, evidence_id, evidence_kind="research", relation="supports"):
+        return self.invoke(
+            "decision.link_evidence",
+            {"decision_id": decision_id, "evidence_id": evidence_id, "evidence_kind": evidence_kind, "relation": relation},
+            permissions={"decision:write", "research:read"},
+            confirmed=True,
+        )
+    def link_decision_transaction(self, decision_id, transaction_id, relation="executed", linked_at=None):
+        arguments = {"decision_id": decision_id, "transaction_id": transaction_id, "relation": relation}
+        if linked_at is not None:
+            arguments["linked_at"] = linked_at
+        return self.invoke(
+            "decision.link_transaction",
+            arguments,
+            permissions={"decision:write", "ledger:read"},
+            confirmed=True,
+        )
+    def review_decision(self, decision_id, review_type, notes, score=None, reviewed_at=None):
+        arguments = {"decision_id": decision_id, "review_type": review_type, "notes": notes}
+        if score is not None:
+            arguments["score"] = score
+        if reviewed_at is not None:
+            arguments["reviewed_at"] = reviewed_at
+        return self.invoke(
+            "decision.review",
+            arguments,
+            permissions={"decision:write"},
+            confirmed=True,
+        )
     def invoke(self, name, arguments=None, *, permissions=(), confirmed=False, dry_run=False):
         return self.capabilities.execute(
             name,

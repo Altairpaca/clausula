@@ -1,5 +1,5 @@
-version: 7
-status: m4_5_planning_cash_allocation_implemented
+version: 8
+status: m5_decision_intelligence_implemented
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
     disposition: MIGRATE_WITH_REWRITE
@@ -88,6 +88,15 @@ canonical_m4_5:
   - planning.list
   - planning.get
 
+canonical_m5:
+  - decision.create
+  - decision.list
+  - decision.get
+  - decision.link_policy
+  - decision.link_evidence
+  - decision.link_transaction
+  - decision.review
+
 implementation_status:
   account.create: implemented
   instrument.resolve: implemented_basic_identifier_registry
@@ -121,6 +130,13 @@ implementation_status:
   planning.create: implemented_append_only_projected_artifact
   planning.list: implemented
   planning.get: implemented_explainable_scenarios
+  decision.create: implemented_immutable_trade_and_non_trade
+  decision.list: implemented
+  decision.get: implemented_full_memory
+  decision.link_policy: implemented_append_only
+  decision.link_evidence: implemented_append_only
+  decision.link_transaction: implemented_append_only_no_ledger_write
+  decision.review: implemented_process_outcome_separation
 
 platform_contract:
   registry: implemented

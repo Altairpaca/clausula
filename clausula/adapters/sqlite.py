@@ -31,6 +31,14 @@ from clausula.domain import (
     PlanScenario,
     ProjectedState,
     CandidateAction,
+    Decision,
+    DecisionAlternative,
+    DecisionEvidenceLink,
+    DecisionPolicyLink,
+    DecisionReview,
+    DecisionReviewSchedule,
+    DecisionStatement,
+    DecisionTransactionLink,
     Portfolio,
     PortfolioMembershipEvent,
     PolicyRule,
@@ -510,11 +518,57 @@ class Store:
                     }
                 )
             plans.append({"plan": dict(plan), "scenarios": scenarios})
+        decisions = []
+        for decision in self.db.execute("SELECT * FROM decisions ORDER BY created_at,id"):
+            decision_id = decision["id"]
+            decisions.append(
+                {
+                    "decision": dict(decision),
+                    "alternatives": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM decision_alternatives WHERE decision_id=? ORDER BY alternative_key,id",
+                            (decision_id,),
+                        )
+                    ],
+                    "policy_links": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM decision_policy_links WHERE decision_id=? ORDER BY id",
+                            (decision_id,),
+                        )
+                    ],
+                    "evidence_links": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM decision_evidence_links WHERE decision_id=? ORDER BY id",
+                            (decision_id,),
+                        )
+                    ],
+                    "transaction_links": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM decision_transaction_links WHERE decision_id=? ORDER BY id",
+                            (decision_id,),
+                        )
+                    ],
+                    "reviews": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM decision_reviews WHERE decision_id=? ORDER BY reviewed_at,id",
+                            (decision_id,),
+                        )
+                    ],
+                    "statements": [dict(row) for row in self.db.execute("SELECT * FROM decision_statements WHERE decision_id=? ORDER BY kind,statement_key,id", (decision_id,))],
+                    "review_schedules": [dict(row) for row in self.db.execute("SELECT * FROM decision_review_schedules WHERE decision_id=? ORDER BY due_at,id", (decision_id,))],
+                }
+            )
         return {
             "accounts": accounts,
             "portfolios": portfolios,
             "policies": policies,
             "plans": plans,
+            "decisions": decisions,
             "imports": imports,
         }
 
@@ -1325,6 +1379,205 @@ class Store:
         if row is None:
             raise KeyError(f"unknown projected state for scenario: {scenario_id}")
         return row
+
+    @staticmethod
+    def _decision_values(decision: Decision) -> tuple:
+        return (
+            decision.id,
+            decision.portfolio_id,
+            decision.title,
+            decision.intent,
+            decision.rationale,
+            decision.as_of,
+            decision.known_as_of,
+            decision.created_at,
+            decision.policy_version_id,
+            decision.plan_id,
+            decision.source_artifact_id,
+            decision.import_batch_id,
+        )
+
+    @staticmethod
+    def _alternative_values(alternative: DecisionAlternative) -> tuple:
+        return (
+            alternative.id,
+            alternative.decision_id,
+            alternative.alternative_key,
+            alternative.description,
+            int(alternative.selected),
+        )
+
+    def add_decision(
+        self, decision: Decision, alternatives: Iterable[DecisionAlternative],
+        statements: Iterable[DecisionStatement] = (),
+        review_schedules: Iterable[DecisionReviewSchedule] = (),
+    ) -> None:
+        self.portfolio(decision.portfolio_id)
+        if decision.policy_version_id is not None:
+            self.policy_version(decision.policy_version_id)
+        if decision.plan_id is not None:
+            self.plan(decision.plan_id)
+        self._require_import_artifact(decision.source_artifact_id, decision.import_batch_id)
+        alternative_rows = tuple(alternatives)
+        statement_rows = tuple(statements)
+        schedule_rows = tuple(review_schedules)
+        if any(row.decision_id != decision.id for row in alternative_rows):
+            raise ValueError("decision alternative belongs to a different decision")
+        with self.write_transaction():
+            self.db.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", self._decision_values(decision))
+            self.db.executemany(
+                "INSERT INTO decision_alternatives VALUES(?,?,?,?,?)",
+                (self._alternative_values(row) for row in alternative_rows),
+            )
+            self.db.executemany("INSERT INTO decision_statements VALUES(?,?,?,?,?)", ((row.id,row.decision_id,row.kind,row.statement_key,row.text) for row in statement_rows))
+            self.db.executemany("INSERT INTO decision_review_schedules VALUES(?,?,?,?)", ((row.id,row.decision_id,row.review_type,row.due_at) for row in schedule_rows))
+            append_audit_event(
+                self.db,
+                operation="decision.create",
+                object_type="decision",
+                object_id=decision.id,
+                payload={
+                    "portfolio_id": decision.portfolio_id,
+                    "policy_version_id": decision.policy_version_id,
+                    "plan_id": decision.plan_id,
+                    "intent": decision.intent,
+                    "alternative_count": len(alternative_rows),
+                    "source_artifact_id": decision.source_artifact_id,
+                    "import_batch_id": decision.import_batch_id,
+                },
+            )
+
+    def decision(self, decision_id: str) -> sqlite3.Row:
+        require_uuid(decision_id, "decision_id")
+        row = self.db.execute("SELECT * FROM decisions WHERE id=?", (decision_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown decision: {decision_id}")
+        return row
+
+    def decisions(self, portfolio_id: str | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM decisions"
+        args: tuple[str, ...] = ()
+        if portfolio_id is not None:
+            require_uuid(portfolio_id, "portfolio_id")
+            query += " WHERE portfolio_id=?"
+            args = (portfolio_id,)
+        return self.db.execute(query + " ORDER BY created_at,id", args).fetchall()
+
+    def decision_alternatives(self, decision_id: str) -> list[sqlite3.Row]:
+        self.decision(decision_id)
+        return self.db.execute(
+            "SELECT * FROM decision_alternatives WHERE decision_id=? ORDER BY alternative_key,id",
+            (decision_id,),
+        ).fetchall()
+
+    def add_decision_policy_link(self, link: DecisionPolicyLink) -> None:
+        self.decision(link.decision_id)
+        self.policy_version(link.policy_version_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO decision_policy_links VALUES(?,?,?,?)",
+                (link.id, link.decision_id, link.policy_version_id, link.link_type),
+            )
+            append_audit_event(
+                self.db,
+                operation="decision.link_policy",
+                object_type="decision_policy_link",
+                object_id=link.id,
+                payload={
+                    "decision_id": link.decision_id,
+                    "policy_version_id": link.policy_version_id,
+                    "link_type": link.link_type,
+                },
+            )
+
+    def add_decision_evidence_link(self, link: DecisionEvidenceLink) -> None:
+        self.decision(link.decision_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO decision_evidence_links VALUES(?,?,?,?,?)",
+                (link.id, link.decision_id, link.evidence_id, link.evidence_kind, link.relation),
+            )
+            append_audit_event(
+                self.db,
+                operation="decision.link_evidence",
+                object_type="decision_evidence_link",
+                object_id=link.id,
+                payload={
+                    "decision_id": link.decision_id,
+                    "evidence_id": link.evidence_id,
+                    "relation": link.relation,
+                },
+            )
+
+    def add_decision_transaction_link(self, link: DecisionTransactionLink) -> None:
+        self.decision(link.decision_id)
+        if self.transaction(link.transaction_id) is None:
+            raise KeyError(f"unknown transaction: {link.transaction_id}")
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO decision_transaction_links VALUES(?,?,?,?,?)",
+                (link.id, link.decision_id, link.transaction_id, link.relation, link.linked_at),
+            )
+            append_audit_event(
+                self.db,
+                operation="decision.link_transaction",
+                object_type="decision_transaction_link",
+                object_id=link.id,
+                payload={
+                    "decision_id": link.decision_id,
+                    "transaction_id": link.transaction_id,
+                    "relation": link.relation,
+                },
+            )
+
+    def add_decision_review(self, review: DecisionReview) -> None:
+        self.decision(review.decision_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO decision_reviews VALUES(?,?,?,?,?,?)",
+                (
+                    review.id,
+                    review.decision_id,
+                    review.review_type,
+                    review.score,
+                    review.notes,
+                    review.reviewed_at,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="decision.review",
+                object_type="decision_review",
+                object_id=review.id,
+                payload={
+                    "decision_id": review.decision_id,
+                    "review_type": review.review_type,
+                    "score": review.score,
+                },
+            )
+
+    def decision_links(self, decision_id: str) -> dict[str, list[sqlite3.Row]]:
+        self.decision(decision_id)
+        return {
+            "policy": self.db.execute(
+                "SELECT * FROM decision_policy_links WHERE decision_id=? ORDER BY id",
+                (decision_id,),
+            ).fetchall(),
+            "evidence": self.db.execute(
+                "SELECT * FROM decision_evidence_links WHERE decision_id=? ORDER BY id",
+                (decision_id,),
+            ).fetchall(),
+            "transaction": self.db.execute(
+                "SELECT * FROM decision_transaction_links WHERE decision_id=? ORDER BY id",
+                (decision_id,),
+            ).fetchall(),
+            "reviews": self.db.execute(
+                "SELECT * FROM decision_reviews WHERE decision_id=? ORDER BY reviewed_at,id",
+                (decision_id,),
+            ).fetchall(),
+            "statements": self.db.execute("SELECT * FROM decision_statements WHERE decision_id=? ORDER BY kind,statement_key,id", (decision_id,)).fetchall(),
+            "review_schedules": self.db.execute("SELECT * FROM decision_review_schedules WHERE decision_id=? ORDER BY due_at,id", (decision_id,)).fetchall(),
+        }
 
     def import_batch(
         self,

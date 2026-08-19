@@ -7,6 +7,7 @@ from .market import MarketImportError, MarketService
 from .portfolio import PortfolioService
 from .policy import PolicyService
 from .planning import PlanningError, PlanningService
+from .decision import DecisionError, DecisionService
 
 __all__ = [
     "CoreRepository",
@@ -20,5 +21,7 @@ __all__ = [
     "PolicyService",
     "PlanningError",
     "PlanningService",
+    "DecisionError",
+    "DecisionService",
     "RebuildError",
 ]
