@@ -9,6 +9,15 @@ import shutil
 import sqlite3
 from typing import Iterable
 
+from .audit import append_audit_event, verify_audit_chain
+from .backup import (
+    create_backup_bundle,
+    restore_backup_bundle,
+    verify_backup_bundle,
+    write_canonical_export,
+)
+from .migrations import LATEST_SCHEMA_VERSION, migrate
+
 from clausula.domain import (
     InstrumentIdentifier,
     Transaction,
@@ -20,7 +29,7 @@ from clausula.domain import (
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = LATEST_SCHEMA_VERSION
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts(
@@ -169,6 +178,14 @@ class Store:
         self._initialize_schema()
 
     def _initialize_schema(self) -> None:
+        migrate(
+            self.db,
+            baseline_sql=SCHEMA,
+            apply_baseline=self._apply_baseline,
+            now=now,
+        )
+
+    def _apply_baseline(self) -> None:
         self.db.executescript(SCHEMA)
         self.db.execute(
             """
@@ -220,7 +237,6 @@ class Store:
                 BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
                 """
             )
-        self.db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.db.commit()
 
     def close(self) -> None:
@@ -228,6 +244,35 @@ class Store:
 
     def integrity_check(self) -> str:
         return self.db.execute("PRAGMA integrity_check").fetchone()[0]
+
+    def verify_audit_chain(self) -> dict:
+        return verify_audit_chain(self.db)
+
+    def export(self, destination: str | Path) -> str:
+        return write_canonical_export(self.db, destination)
+
+    def backup_bundle(self, destination: str | Path) -> dict:
+        return create_backup_bundle(self.db, self.raw_root, destination)
+
+    def verify_backup(self, source: str | Path) -> dict:
+        return verify_backup_bundle(source)
+
+    def restore_bundle(self, source: str | Path) -> dict:
+        manifest = restore_backup_bundle(self.db, self.raw_root, source)
+        self.db.execute("PRAGMA foreign_keys = ON")
+        self._initialize_schema()
+        with self.db:
+            append_audit_event(
+                self.db,
+                operation="system.restore",
+                object_type="backup_bundle",
+                object_id=manifest["sha256"],
+                payload={
+                    "format": manifest["format"],
+                    "source_audit_head": manifest["audit_head"],
+                },
+            )
+        return manifest
 
     def backup(self, destination: str | Path) -> str:
         destination_path = Path(destination)
@@ -250,6 +295,14 @@ class Store:
             source_db.close()
         self.db.execute("PRAGMA foreign_keys = ON")
         self._initialize_schema()
+        with self.db:
+            append_audit_event(
+                self.db,
+                operation="system.restore",
+                object_type="database",
+                object_id="clausula.db",
+                payload={"format": "sqlite-only-legacy"},
+            )
 
     def artifact(self, path: str | Path) -> tuple[str, str]:
         source = Path(path).resolve()
@@ -259,8 +312,7 @@ class Store:
         if existing:
             return existing["id"], digest
 
-        suffix = source.suffix.lower()
-        stored = self.raw_root / f"{digest}{suffix}"
+        stored = self.raw_root / digest
         if not stored.exists():
             temporary = self.raw_root / f".{digest}.{new_id()}.tmp"
             shutil.copyfile(source, temporary)
@@ -288,6 +340,13 @@ class Store:
                    ) VALUES(?,?,?,?,?)""",
                 (artifact_id, str(source), len(data), media_type, "file"),
             )
+            append_audit_event(
+                self.db,
+                operation="artifact.capture",
+                object_type="source_artifact",
+                object_id=artifact_id,
+                payload={"sha256": digest, "size_bytes": len(data), "kind": "file"},
+            )
         return artifact_id, digest
 
     def virtual_artifact(self, uri: str, content: str) -> tuple[str, str]:
@@ -308,6 +367,18 @@ class Store:
                 "INSERT INTO artifact_details VALUES(?,?,?,?,?)",
                 (artifact_id, uri, len(content.encode("utf-8")), "text/plain", "manual"),
             )
+            append_audit_event(
+                self.db,
+                operation="artifact.capture",
+                object_type="source_artifact",
+                object_id=artifact_id,
+                payload={
+                    "sha256": digest,
+                    "size_bytes": len(content.encode("utf-8")),
+                    "kind": "manual",
+                    "uri": uri,
+                },
+            )
         return artifact_id, digest
 
     def create_account(self, institution: str, name: str) -> str:
@@ -318,6 +389,13 @@ class Store:
             self.db.execute(
                 "INSERT INTO accounts VALUES(?,?,?,?)",
                 (account_id, institution.strip(), name.strip(), now()),
+            )
+            append_audit_event(
+                self.db,
+                operation="account.create",
+                object_type="account",
+                object_id=account_id,
+                payload={"institution": institution.strip(), "name": name.strip()},
             )
         return account_id
 
@@ -361,6 +439,18 @@ class Store:
                 "INSERT INTO instrument_identifiers VALUES(?,?,?,?,?)",
                 (new_id(), instrument_id, identifier.scheme, identifier.value, now()),
             )
+            append_audit_event(
+                self.db,
+                operation="instrument.resolve",
+                object_type="instrument",
+                object_id=instrument_id,
+                payload={
+                    "scheme": identifier.scheme,
+                    "identifier": identifier.value,
+                    "asset_type": asset_type.strip().lower(),
+                    "currency": currency.strip().upper(),
+                },
+            )
         return instrument_id
 
     def import_batch(
@@ -372,16 +462,30 @@ class Store:
         schema_version: str = "1",
     ) -> str:
         batch_id = new_id()
-        self._insert_import_batch(
-            batch_id,
-            artifact_id,
-            adapter_name,
-            adapter_version,
-            schema_version,
-            0,
-            0,
-        )
-        self.db.commit()
+        with self.db:
+            self._insert_import_batch(
+                batch_id,
+                artifact_id,
+                adapter_name,
+                adapter_version,
+                schema_version,
+                0,
+                0,
+            )
+            append_audit_event(
+                self.db,
+                operation="import.create",
+                object_type="import_batch",
+                object_id=batch_id,
+                payload={
+                    "artifact_id": artifact_id,
+                    "adapter_name": adapter_name,
+                    "adapter_version": adapter_version,
+                    "schema_version": schema_version,
+                    "input_rows": 0,
+                    "inserted_rows": 0,
+                },
+            )
         return batch_id
 
     def _insert_import_batch(
@@ -440,6 +544,21 @@ class Store:
                     "INSERT INTO imported_rows VALUES(?,?,?,?,?)",
                     (new_id(), transaction.account_id, artifact_id, external_id, transaction.id),
                 )
+                self._audit_transaction(transaction)
+            append_audit_event(
+                self.db,
+                operation="import.create",
+                object_type="import_batch",
+                object_id=batch_id,
+                payload={
+                    "artifact_id": artifact_id,
+                    "adapter_name": adapter_name,
+                    "adapter_version": adapter_version,
+                    "schema_version": schema_version,
+                    "input_rows": len(materialized),
+                    "inserted_rows": len(pending),
+                },
+            )
         return len(pending)
 
     def add_transaction(self, transaction: Transaction, external_id: str | None = None) -> bool:
@@ -464,6 +583,7 @@ class Store:
                         transaction.id,
                     ),
                 )
+            self._audit_transaction(transaction)
         return True
 
     def add_transfer(
@@ -482,6 +602,36 @@ class Store:
                 "INSERT INTO transfer_links VALUES(?,?,?,?)",
                 (transfer_id, source_transaction.id, destination_transaction.id, now()),
             )
+            self._audit_transaction(source_transaction)
+            self._audit_transaction(destination_transaction)
+            append_audit_event(
+                self.db,
+                operation="ledger.record_transfer",
+                object_type="transfer",
+                object_id=transfer_id,
+                payload={
+                    "source_transaction_id": source_transaction.id,
+                    "destination_transaction_id": destination_transaction.id,
+                },
+            )
+
+    def _audit_transaction(self, transaction: Transaction) -> None:
+        append_audit_event(
+            self.db,
+            operation=f"ledger.{transaction.type}",
+            object_type="transaction",
+            object_id=transaction.id,
+            payload={
+                "account_id": transaction.account_id,
+                "effective_at": transaction.effective_at,
+                "known_at": transaction.known_at,
+                "recorded_at": transaction.recorded_at,
+                "source_artifact_id": transaction.source_artifact_id,
+                "import_batch_id": transaction.import_batch_id,
+                "leg_count": len(transaction.legs),
+                "corrects_transaction_id": transaction.corrects_transaction_id,
+            },
+        )
 
     def _insert_transaction(self, transaction: Transaction) -> None:
         self.require_account(transaction.account_id)
@@ -600,5 +750,19 @@ class Store:
                     json.dumps(derived, sort_keys=True, separators=(",", ":")),
                     json.dumps(differences, sort_keys=True, separators=(",", ":")),
                 ),
+            )
+            append_audit_event(
+                self.db,
+                operation="ledger.reconcile",
+                object_type="reconciliation",
+                object_id=record_id,
+                payload={
+                    "account_id": account_id,
+                    "effective_at": normalized_effective_at,
+                    "known_at": normalized_known_at,
+                    "source_artifact_id": source_artifact_id,
+                    "import_batch_id": import_batch_id,
+                    "difference_count": len(differences),
+                },
             )
         return record_id

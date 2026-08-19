@@ -211,7 +211,8 @@ def test_pre_versioned_database_is_upgraded_without_rewriting_facts(tmp_path):
     store = Store(root)
 
     assert store.integrity_check() == "ok"
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert [row[0] for row in store.db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2]
     assert store.db.execute("SELECT artifact_kind FROM artifact_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT adapter_name FROM import_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT transaction_id FROM imported_rows").fetchone()[0] == transaction_id

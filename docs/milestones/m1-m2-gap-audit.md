@@ -1,7 +1,7 @@
 # M1/M2 Gap Audit
 
 - Audit date: 2026-08-19
-- Current gate: M1 kernel release candidate; M2 Ledger vertical slice in progress
+- Current gate: M1 kernel frozen; M2 Ledger vertical slice in progress
 
 ## Implemented and tested
 
@@ -17,14 +17,20 @@
 - append-only correction chains and reconciliation records
 - database integrity check, backup, restore, and pre-versioned schema upgrade
 - architecture tests for inward dependency direction
+- typed Ledger/Core repository ports
+- ordered checksummed schema migrations with future-version rejection
+- same-transaction SHA-256 audit chain and verification
+- complete database/raw/export backup bundles with adversarial restore validation
+- stable canonical JSONL export
+- executable Capability Registry with schemas, permissions, confirmation, dry-run, provenance, and versions
+- CLI and SDK projection from the registry
 
-## Blocking gaps before M1 freeze
+## M1 residual risks
 
-- Replace implicit storage behavior with a typed repository/Unit of Work port.
-- Introduce ordered schema migrations with upgrade and downgrade policy; the current bootstrap migration only supports the initial prototype.
-- Define audit-event and tamper-evidence contracts independently from financial fact tables.
-- Define canonical export and raw-plus-database backup manifests; current backup covers SQLite only.
-- Add capability descriptors and permissions before exposing additional write clients.
+- Audit hashes are not externally signed; a privileged local attacker can rebuild the chain.
+- Backup bundles are integrity-protected but not encrypted.
+- SQLite remains a single-user local writer; multi-process write contention policy is not yet specified.
+- Migrations are forward-only. Downgrade requires backup restore or an explicit export/import tool.
 
 ## Blocking gaps before M2 freeze
 
