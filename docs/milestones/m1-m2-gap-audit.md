@@ -1,7 +1,7 @@
 # M1/M2 Gap Audit
 
 - Audit date: 2026-08-19
-- Current gate: M1 kernel frozen; M2 Ledger vertical slice in progress
+- Current gate: M1 kernel frozen; M2 Ledger vertical slice frozen
 
 ## Implemented and tested
 
@@ -24,6 +24,11 @@
 - stable canonical JSONL export
 - executable Capability Registry with schemas, permissions, confirmation, dry-run, provenance, and versions
 - CLI and SDK projection from the registry
+- FIFO lot replay with realized gain and open basis provenance
+- deterministic same-day source ordering for imported transactions
+- explicit FX conversion, security transfer lot lineage, and split corporate action records
+- typed reconciliation observations
+- raw CSV and manual-event rebuild into an empty database with ID mapping and state comparison
 
 ## M1 residual risks
 
@@ -32,16 +37,14 @@
 - SQLite remains a single-user local writer; multi-process write contention policy is not yet specified.
 - Migrations are forward-only. Downgrade requires backup restore or an explicit export/import tool.
 
-## Blocking gaps before M2 freeze
+## M2 residual risks before M3 valuation freeze
 
-- Complete institution/account semantics and historical instrument identifier validity.
-- Define lots, cost basis, fee/tax ownership, dividends/distributions, FX, and corporate actions.
-- Support two-sided security transfers and cross-currency transfer/conversion contracts.
-- Store observed brokerage snapshots as typed reconciliation observations.
-- Provide a validated intermediate schema and controlled local ETL for legacy portfolios.
-- Rebuild the Ledger deterministically from raw artifacts into an empty database and compare reconciliation outputs.
-- Add property tests for conservation, transfer tie-out, correction replay, and arbitrary import order.
-- Complete CLI workflows for transaction history, correction, reconciliation, backup, and restore.
+- Historical instrument identifier validity and richer institution/account semantics remain to be modeled.
+- Jurisdiction tax lots, short sales, cash-in-lieu, mergers, spin-offs, return of capital, and fund distributions need explicit later contracts.
+- Unknown legacy basis is surfaced as a warning/error rather than guessed.
+- Rebuild supports versioned CSV and manual event envelopes; legacy adapters require validated intermediate ETL.
+- Portfolio valuation requires versioned market snapshots and explicit FX valuation policy.
+- Complete CLI workflows for correction, reconciliation, FX, security transfer, and corporate action remain pending.
 
 ## Explicitly deferred
 

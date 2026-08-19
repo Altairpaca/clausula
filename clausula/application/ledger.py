@@ -8,9 +8,15 @@ from typing import Mapping
 
 from .ports import LedgerRepository
 
+from clausula.analytics import plan_fifo_transfer, replay_fifo
+
 from clausula.domain import (
+    CorporateAction,
+    FxConversion,
     InstrumentIdentifier,
+    LotTransferAllocation,
     ReconciliationResult,
+    SecurityTransfer,
     Transaction,
     TransactionLeg,
     canonical_decimal,
@@ -23,6 +29,7 @@ from clausula.domain import (
 
 CSV_ADAPTER_VERSION = "1"
 CSV_SCHEMA_VERSION = "1"
+MANUAL_EVENT_FORMAT = "clausula-manual-event-v1"
 
 
 class ImportValidationError(ValueError):
@@ -190,6 +197,7 @@ class LedgerService:
             artifact_id,
             batch_id,
             tuple(legs),
+            source_sequence=row_number - 1,
         )
 
     @staticmethod
@@ -208,16 +216,28 @@ class LedgerService:
         if unbalanced:
             raise ValueError(f"transaction amounts do not conserve by currency: {unbalanced}")
 
-    def transactions(self, account_id: str, as_of: str | None = None) -> list[dict]:
+    def transactions(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        *,
+        known_as_of: str | None = None,
+    ) -> list[dict]:
         return [
             dict(row) | {"legs": [dict(leg) for leg in self.repository.legs(row["id"])]}
-            for row in self.repository.transactions(account_id, as_of)
+            for row in self.repository.transactions(account_id, as_of, known_as_of)
         ]
 
-    def state(self, account_id: str, as_of: str | None = None) -> dict:
+    def state(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        *,
+        known_as_of: str | None = None,
+    ) -> dict:
         positions: dict[str, Decimal] = {}
         cash_by_currency: dict[str, Decimal] = {}
-        for transaction in self.repository.transactions(account_id, as_of):
+        for transaction in self.repository.transactions(account_id, as_of, known_as_of):
             for leg in self.repository.legs(transaction["id"]):
                 if leg["leg_type"] == "cash":
                     currency = leg["currency"]
@@ -252,6 +272,25 @@ class LedgerService:
 
     def positions(self, account_id: str, as_of: str | None = None) -> dict[str, str]:
         return self.state(account_id, as_of)["positions"]
+
+    def cost_basis(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        *,
+        known_as_of: str | None = None,
+    ) -> dict:
+        transactions = self.transactions(account_id, as_of, known_as_of=known_as_of)
+        metadata = {
+            transaction["id"]: dict(self.repository.transaction_metadata(transaction["id"]))
+            for transaction in transactions
+        }
+        report = replay_fifo(transactions, metadata)
+        return {
+            "account_id": account_id,
+            "as_of": canonical_timestamp(as_of) if as_of else now(),
+            **report,
+        }
 
     def reconcile(
         self,
@@ -301,8 +340,16 @@ class LedgerService:
             "cash_by_currency": observed_cash,
             "positions": observed_positions,
         }
+        knowledge_time = known_at or now()
         provenance_content = json.dumps(
-            {"account_id": account_id, "as_of": as_of, "observed": normalized_observed},
+            {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.reconcile",
+                "account_id": account_id,
+                "effective_at": canonical_timestamp(as_of),
+                "known_at": canonical_timestamp(knowledge_time),
+                "observed": normalized_observed,
+            },
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -316,7 +363,7 @@ class LedgerService:
         record_id = self.repository.record_reconciliation(
             account_id=account_id,
             effective_at=as_of,
-            known_at=known_at or now(),
+            known_at=knowledge_time,
             source_artifact_id=artifact_id,
             import_batch_id=batch_id,
             observed=normalized_observed,
@@ -345,11 +392,29 @@ class LedgerService:
             raise ValueError("correction reason is required")
         self._require_amount_conservation(list(legs))
         transaction_id = new_id()
+        recorded_at = now()
+        knowledge_time = known_at or recorded_at
         provenance_content = json.dumps(
             {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.record_correction",
                 "transaction_id": transaction_id,
+                "account_id": account_id,
+                "effective_at": canonical_timestamp(effective_at),
+                "known_at": canonical_timestamp(knowledge_time),
                 "corrects_transaction_id": corrects_transaction_id,
                 "reason": reason,
+                "legs": [
+                    {
+                        "account_id": leg.account_id,
+                        "instrument_id": leg.instrument_id,
+                        "quantity": canonical_decimal(leg.quantity),
+                        "amount": canonical_decimal(leg.amount),
+                        "currency": leg.currency,
+                        "leg_type": leg.leg_type,
+                    }
+                    for leg in legs
+                ],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -361,13 +426,12 @@ class LedgerService:
             adapter_version="1",
             schema_version="1",
         )
-        recorded_at = now()
         transaction = Transaction(
             transaction_id,
             account_id,
             "correction",
             effective_at,
-            known_at or recorded_at,
+            knowledge_time,
             recorded_at,
             reason.strip(),
             artifact_id,
@@ -402,17 +466,26 @@ class LedgerService:
             raise ValueError("transfer fee must not be negative")
 
         transfer_id = new_id()
+        source_transaction_id = new_id()
+        destination_transaction_id = new_id()
         recorded_at = now()
         knowledge_time = known_at or recorded_at
         normalized_currency = currency.strip().upper()
         provenance = json.dumps(
             {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.record_cash_transfer",
                 "transfer_id": transfer_id,
+                "source_transaction_id": source_transaction_id,
+                "destination_transaction_id": destination_transaction_id,
                 "source_account_id": source_account_id,
                 "destination_account_id": destination_account_id,
                 "amount": canonical_decimal(transfer_amount),
                 "fee": canonical_decimal(transfer_fee),
                 "currency": normalized_currency,
+                "effective_at": canonical_timestamp(effective_at),
+                "known_at": canonical_timestamp(knowledge_time),
+                "description": description,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -473,7 +546,7 @@ class LedgerService:
             ),
         )
         source_transaction = Transaction(
-            new_id(),
+            source_transaction_id,
             source_account_id,
             "transfer_out",
             effective_at,
@@ -485,7 +558,7 @@ class LedgerService:
             tuple(source_legs),
         )
         destination_transaction = Transaction(
-            new_id(),
+            destination_transaction_id,
             destination_account_id,
             "transfer_in",
             effective_at,
@@ -502,3 +575,329 @@ class LedgerService:
             "source_transaction_id": source_transaction.id,
             "destination_transaction_id": destination_transaction.id,
         }
+
+    def record_fx_conversion(
+        self,
+        account_id: str,
+        from_currency: str,
+        to_currency: str,
+        from_amount: Decimal | str | int,
+        to_amount: Decimal | str | int,
+        effective_at: str,
+        *,
+        fee: Decimal | str | int = "0",
+        fee_currency: str | None = None,
+        known_at: str | None = None,
+        description: str = "FX conversion",
+    ) -> str:
+        self.repository.require_account(account_id)
+        source_amount = dec(from_amount)
+        destination_amount = dec(to_amount)
+        fee_amount = dec(fee)
+        if source_amount <= 0 or destination_amount <= 0:
+            raise ValueError("FX amounts must be positive")
+        if fee_amount < 0:
+            raise ValueError("FX fee must not be negative")
+        source_currency = from_currency.strip().upper()
+        destination_currency = to_currency.strip().upper()
+        normalized_fee_currency = fee_currency.strip().upper() if fee_currency else None
+        if fee_amount and normalized_fee_currency is None:
+            normalized_fee_currency = source_currency
+        transaction_id = new_id()
+        conversion = FxConversion(
+            transaction_id,
+            source_currency,
+            destination_currency,
+            source_amount,
+            destination_amount,
+            destination_amount / source_amount,
+            fee_amount,
+            normalized_fee_currency,
+        )
+        recorded_at = now()
+        provenance = json.dumps(
+            {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.record_fx_conversion",
+                "transaction_id": transaction_id,
+                "account_id": account_id,
+                "from_currency": source_currency,
+                "to_currency": destination_currency,
+                "from_amount": canonical_decimal(source_amount),
+                "to_amount": canonical_decimal(destination_amount),
+                "fee": canonical_decimal(fee_amount),
+                "fee_currency": normalized_fee_currency,
+                "effective_at": canonical_timestamp(effective_at),
+                "known_at": canonical_timestamp(known_at or recorded_at),
+                "description": description,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        artifact_id, _ = self.repository.virtual_artifact("manual://fx-conversion", provenance)
+        batch_id = self.repository.import_batch(
+            artifact_id,
+            adapter_name="manual-fx",
+            adapter_version="1",
+            schema_version="1",
+        )
+        source_cash = -source_amount
+        destination_cash = destination_amount
+        if fee_amount and normalized_fee_currency == source_currency:
+            source_cash -= fee_amount
+        elif fee_amount and normalized_fee_currency == destination_currency:
+            destination_cash -= fee_amount
+        legs = [
+            TransactionLeg(account_id, None, Decimal(0), source_cash, source_currency, "cash"),
+            TransactionLeg(account_id, None, Decimal(0), source_amount, source_currency, "fx"),
+            TransactionLeg(account_id, None, Decimal(0), destination_cash, destination_currency, "cash"),
+            TransactionLeg(account_id, None, Decimal(0), -destination_amount, destination_currency, "fx"),
+        ]
+        if fee_amount:
+            legs.append(
+                TransactionLeg(
+                    account_id,
+                    None,
+                    Decimal(0),
+                    fee_amount,
+                    normalized_fee_currency or source_currency,
+                    "fee",
+                )
+            )
+        self._require_amount_conservation(legs)
+        transaction = Transaction(
+            transaction_id,
+            account_id,
+            "fx_conversion",
+            effective_at,
+            known_at or recorded_at,
+            recorded_at,
+            description,
+            artifact_id,
+            batch_id,
+            tuple(legs),
+        )
+        self.repository.add_fx_conversion(transaction, conversion)
+        return transaction_id
+
+    def record_security_transfer(
+        self,
+        source_account_id: str,
+        destination_account_id: str,
+        instrument_id: str,
+        quantity: Decimal | str | int,
+        effective_at: str,
+        *,
+        known_at: str | None = None,
+        description: str = "security transfer",
+    ) -> dict[str, str]:
+        self.repository.require_account(source_account_id)
+        self.repository.require_account(destination_account_id)
+        instrument = self.repository.instrument_details(instrument_id)
+        if source_account_id == destination_account_id:
+            raise ValueError("security transfer accounts must be distinct")
+        transfer_quantity = dec(quantity)
+        if transfer_quantity <= 0:
+            raise ValueError("security transfer quantity must be positive")
+        recorded_at = now()
+        knowledge_time = known_at or recorded_at
+        report = self.cost_basis(
+            source_account_id,
+            effective_at,
+            known_as_of=knowledge_time,
+        )
+        raw_allocations = plan_fifo_transfer(report, instrument_id, transfer_quantity)
+        allocations = tuple(
+            LotTransferAllocation(
+                item["source_transaction_id"],
+                item["acquired_at"],
+                dec(item["quantity"]),
+                dec(item["basis"]),
+                item["currency"],
+            )
+            for item in raw_allocations
+        )
+        currencies = {item.currency for item in allocations}
+        if currencies != {instrument["currency"]}:
+            raise ValueError("lot currency does not match instrument currency")
+        carried_basis = sum((item.basis for item in allocations), Decimal(0))
+        transfer_id = new_id()
+        source_transaction_id = new_id()
+        destination_transaction_id = new_id()
+        provenance = json.dumps(
+            {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.record_security_transfer",
+                "transfer_id": transfer_id,
+                "source_transaction_id": source_transaction_id,
+                "destination_transaction_id": destination_transaction_id,
+                "source_account_id": source_account_id,
+                "destination_account_id": destination_account_id,
+                "instrument_id": instrument_id,
+                "quantity": canonical_decimal(transfer_quantity),
+                "carried_basis": canonical_decimal(carried_basis),
+                "allocations": raw_allocations,
+                "effective_at": canonical_timestamp(effective_at),
+                "known_at": canonical_timestamp(knowledge_time),
+                "description": description,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        artifact_id, _ = self.repository.virtual_artifact("manual://security-transfer", provenance)
+        batch_id = self.repository.import_batch(
+            artifact_id,
+            adapter_name="manual-security-transfer",
+            adapter_version="1",
+            schema_version="1",
+        )
+        source_transaction = Transaction(
+            source_transaction_id,
+            source_account_id,
+            "transfer_out",
+            effective_at,
+            knowledge_time,
+            recorded_at,
+            description,
+            artifact_id,
+            batch_id,
+            (
+                TransactionLeg(
+                    source_account_id,
+                    instrument_id,
+                    -transfer_quantity,
+                    Decimal(0),
+                    instrument["currency"],
+                    "position",
+                ),
+            ),
+        )
+        destination_transaction = Transaction(
+            destination_transaction_id,
+            destination_account_id,
+            "transfer_in",
+            effective_at,
+            knowledge_time,
+            recorded_at,
+            description,
+            artifact_id,
+            batch_id,
+            (
+                TransactionLeg(
+                    destination_account_id,
+                    instrument_id,
+                    transfer_quantity,
+                    Decimal(0),
+                    instrument["currency"],
+                    "position",
+                ),
+            ),
+        )
+        transfer = SecurityTransfer(
+            transfer_id,
+            source_transaction_id,
+            destination_transaction_id,
+            instrument_id,
+            transfer_quantity,
+            carried_basis,
+            instrument["currency"],
+            allocations,
+        )
+        self.repository.add_security_transfer(
+            transfer, source_transaction, destination_transaction
+        )
+        return {
+            "transfer_id": transfer_id,
+            "source_transaction_id": source_transaction_id,
+            "destination_transaction_id": destination_transaction_id,
+        }
+
+    def record_split(
+        self,
+        account_id: str,
+        instrument_id: str,
+        numerator: Decimal | str | int,
+        denominator: Decimal | str | int,
+        effective_at: str,
+        *,
+        known_at: str | None = None,
+        description: str = "security split",
+    ) -> str:
+        self.repository.require_account(account_id)
+        instrument = self.repository.instrument_details(instrument_id)
+        split_numerator = dec(numerator)
+        split_denominator = dec(denominator)
+        if split_numerator <= 0 or split_denominator <= 0:
+            raise ValueError("split ratio must be positive")
+        if split_numerator == split_denominator:
+            raise ValueError("split ratio must change quantity")
+        recorded_at = now()
+        knowledge_time = known_at or recorded_at
+        pre_action_state = self.state(
+            account_id,
+            effective_at,
+            known_as_of=knowledge_time,
+        )
+        current_quantity = dec(pre_action_state["positions"].get(instrument_id, "0"))
+        if current_quantity == 0:
+            raise ValueError("cannot split a zero position")
+        adjustment = current_quantity * (split_numerator / split_denominator - Decimal(1))
+        transaction_id = new_id()
+        action_id = new_id()
+        provenance = json.dumps(
+            {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": "ledger.record_split",
+                "action_id": action_id,
+                "transaction_id": transaction_id,
+                "account_id": account_id,
+                "instrument_id": instrument_id,
+                "numerator": canonical_decimal(split_numerator),
+                "denominator": canonical_decimal(split_denominator),
+                "pre_action_quantity": canonical_decimal(current_quantity),
+                "quantity_adjustment": canonical_decimal(adjustment),
+                "effective_at": canonical_timestamp(effective_at),
+                "known_at": canonical_timestamp(knowledge_time),
+                "description": description,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        artifact_id, _ = self.repository.virtual_artifact("manual://corporate-action", provenance)
+        batch_id = self.repository.import_batch(
+            artifact_id,
+            adapter_name="manual-corporate-action",
+            adapter_version="1",
+            schema_version="1",
+        )
+        transaction = Transaction(
+            transaction_id,
+            account_id,
+            "split",
+            effective_at,
+            knowledge_time,
+            recorded_at,
+            description,
+            artifact_id,
+            batch_id,
+            (
+                TransactionLeg(
+                    account_id,
+                    instrument_id,
+                    adjustment,
+                    Decimal(0),
+                    instrument["currency"],
+                    "position",
+                ),
+            ),
+        )
+        action = CorporateAction(
+            action_id,
+            transaction_id,
+            instrument_id,
+            "split",
+            split_numerator,
+            split_denominator,
+        )
+        self.repository.add_corporate_action(transaction, action)
+        return action_id

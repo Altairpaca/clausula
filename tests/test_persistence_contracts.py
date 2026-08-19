@@ -29,9 +29,9 @@ def test_raw_artifact_is_content_addressed_and_immutable(tmp_path):
 
     assert first_id == second_id
     assert digest == second_digest
-    assert Path(row["path"]).parent == store.raw_root
-    assert Path(row["path"]).read_bytes() == source.read_bytes()
-    assert Path(row["path"]).stat().st_mode & 0o222 == 0
+    assert row["path"] == f"raw/{digest}"
+    assert (store.raw_root / digest).read_bytes() == source.read_bytes()
+    assert (store.raw_root / digest).stat().st_mode & 0o222 == 0
 
 
 def test_invalid_csv_does_not_commit_an_import_or_transactions(tmp_path):
@@ -211,8 +211,8 @@ def test_pre_versioned_database_is_upgraded_without_rewriting_facts(tmp_path):
     store = Store(root)
 
     assert store.integrity_check() == "ok"
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 2
-    assert [row[0] for row in store.db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2]
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert [row[0] for row in store.db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3]
     assert store.db.execute("SELECT artifact_kind FROM artifact_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT adapter_name FROM import_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT transaction_id FROM imported_rows").fetchone()[0] == transaction_id

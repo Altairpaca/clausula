@@ -64,6 +64,94 @@ BEFORE DELETE ON audit_events
 BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;
 """,
     ),
+    Migration(
+        3,
+        "ledger_lots_fx_corporate_actions",
+        """
+CREATE TABLE fx_conversions(
+    transaction_id TEXT PRIMARY KEY REFERENCES transactions(id),
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    from_amount TEXT NOT NULL,
+    to_amount TEXT NOT NULL,
+    rate TEXT NOT NULL,
+    fee TEXT NOT NULL,
+    fee_currency TEXT
+);
+CREATE TABLE transaction_order(
+    transaction_id TEXT PRIMARY KEY REFERENCES transactions(id),
+    source_sequence INTEGER NOT NULL CHECK(source_sequence >= 0)
+);
+CREATE TABLE security_transfers(
+    id TEXT PRIMARY KEY,
+    source_transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    destination_transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    quantity TEXT NOT NULL,
+    carried_basis TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(source_transaction_id, destination_transaction_id)
+);
+CREATE TABLE security_transfer_allocations(
+    id TEXT PRIMARY KEY,
+    security_transfer_id TEXT NOT NULL REFERENCES security_transfers(id),
+    sequence INTEGER NOT NULL,
+    source_transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    acquired_at TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    UNIQUE(security_transfer_id, sequence)
+);
+CREATE TABLE corporate_actions(
+    id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id),
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    action_type TEXT NOT NULL,
+    numerator TEXT NOT NULL,
+    denominator TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE TABLE reconciliation_observations(
+    id TEXT PRIMARY KEY,
+    reconciliation_id TEXT NOT NULL REFERENCES reconciliation_records(id),
+    kind TEXT NOT NULL,
+    instrument_id TEXT REFERENCES instruments(id),
+    currency TEXT,
+    value TEXT NOT NULL,
+    CHECK(kind IN ('cash','position')),
+    CHECK((kind='cash' AND currency IS NOT NULL AND instrument_id IS NULL) OR
+          (kind='position' AND currency IS NULL AND instrument_id IS NOT NULL))
+);
+CREATE INDEX reconciliation_observations_record
+ON reconciliation_observations(reconciliation_id, kind);
+CREATE TRIGGER fx_conversions_reject_update BEFORE UPDATE ON fx_conversions
+BEGIN SELECT RAISE(ABORT, 'fx_conversions is append-only'); END;
+CREATE TRIGGER transaction_order_reject_update BEFORE UPDATE ON transaction_order
+BEGIN SELECT RAISE(ABORT, 'transaction_order is append-only'); END;
+CREATE TRIGGER transaction_order_reject_delete BEFORE DELETE ON transaction_order
+BEGIN SELECT RAISE(ABORT, 'transaction_order is append-only'); END;
+CREATE TRIGGER fx_conversions_reject_delete BEFORE DELETE ON fx_conversions
+BEGIN SELECT RAISE(ABORT, 'fx_conversions is append-only'); END;
+CREATE TRIGGER security_transfers_reject_update BEFORE UPDATE ON security_transfers
+BEGIN SELECT RAISE(ABORT, 'security_transfers is append-only'); END;
+CREATE TRIGGER security_transfers_reject_delete BEFORE DELETE ON security_transfers
+BEGIN SELECT RAISE(ABORT, 'security_transfers is append-only'); END;
+CREATE TRIGGER security_transfer_allocations_reject_update BEFORE UPDATE ON security_transfer_allocations
+BEGIN SELECT RAISE(ABORT, 'security_transfer_allocations is append-only'); END;
+CREATE TRIGGER security_transfer_allocations_reject_delete BEFORE DELETE ON security_transfer_allocations
+BEGIN SELECT RAISE(ABORT, 'security_transfer_allocations is append-only'); END;
+CREATE TRIGGER corporate_actions_reject_update BEFORE UPDATE ON corporate_actions
+BEGIN SELECT RAISE(ABORT, 'corporate_actions is append-only'); END;
+CREATE TRIGGER corporate_actions_reject_delete BEFORE DELETE ON corporate_actions
+BEGIN SELECT RAISE(ABORT, 'corporate_actions is append-only'); END;
+CREATE TRIGGER reconciliation_observations_reject_update BEFORE UPDATE ON reconciliation_observations
+BEGIN SELECT RAISE(ABORT, 'reconciliation_observations is append-only'); END;
+CREATE TRIGGER reconciliation_observations_reject_delete BEFORE DELETE ON reconciliation_observations
+BEGIN SELECT RAISE(ABORT, 'reconciliation_observations is append-only'); END;
+""",
+    ),
 )
 
 

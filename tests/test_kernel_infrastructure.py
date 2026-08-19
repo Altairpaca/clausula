@@ -51,6 +51,7 @@ def test_migrations_are_ordered_and_checksummed(tmp_path):
     assert [tuple(row) for row in rows] == [
         (1, "kernel_baseline", 64),
         (2, "tamper_evident_audit_log", 64),
+        (3, "ledger_lots_fx_corporate_actions", 64),
     ]
 
     store.db.execute("DROP TRIGGER schema_migrations_reject_update")

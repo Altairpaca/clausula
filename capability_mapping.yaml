@@ -54,6 +54,8 @@ canonical_m0_m2:
   - ledger.import
   - ledger.get_transactions
   - ledger.get_state
+  - ledger.get_cost_basis
+  - ledger.record_fx_conversion
   - ledger.record_transfer
   - ledger.record_correction
   - ledger.reconcile
@@ -70,6 +72,8 @@ implementation_status:
   ledger.import: implemented_csv_atomic_transactions
   ledger.get_transactions: implemented
   ledger.get_state: implemented_cash_and_quantity_replay
+  ledger.get_cost_basis: implemented_fifo
+  ledger.record_fx_conversion: implemented_balanced_two_currency
   ledger.record_transfer: implemented_cash_two_sided
   ledger.record_correction: implemented_append_only
   ledger.reconcile: implemented_append_only_record

@@ -19,7 +19,10 @@ from .backup import (
 from .migrations import LATEST_SCHEMA_VERSION, migrate
 
 from clausula.domain import (
+    CorporateAction,
+    FxConversion,
     InstrumentIdentifier,
+    SecurityTransfer,
     Transaction,
     canonical_decimal,
     canonical_timestamp,
@@ -332,7 +335,7 @@ class Store:
         with self.db:
             self.db.execute(
                 "INSERT INTO artifacts(id,path,sha256,created_at) VALUES(?,?,?,?)",
-                (artifact_id, str(stored), digest, now()),
+                (artifact_id, f"raw/{digest}", digest, now()),
             )
             self.db.execute(
                 """INSERT INTO artifact_details(
@@ -350,22 +353,36 @@ class Store:
         return artifact_id, digest
 
     def virtual_artifact(self, uri: str, content: str) -> tuple[str, str]:
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        data = content.encode("utf-8")
+        digest = hashlib.sha256(data).hexdigest()
         existing = self.db.execute(
-            "SELECT id FROM artifacts WHERE path=? AND sha256=? ORDER BY created_at LIMIT 1",
+            """SELECT a.id FROM artifacts a
+               JOIN artifact_details d ON d.artifact_id=a.id
+               WHERE d.source_path=? AND a.sha256=? ORDER BY a.created_at LIMIT 1""",
             (uri, digest),
         ).fetchone()
         if existing:
             return existing["id"], digest
+        stored = self.raw_root / digest
+        if not stored.exists():
+            temporary = self.raw_root / f".{digest}.{new_id()}.tmp"
+            temporary.write_bytes(data)
+            try:
+                os.link(temporary, stored)
+            except FileExistsError:
+                pass
+            finally:
+                temporary.unlink(missing_ok=True)
+            stored.chmod(0o444)
         artifact_id = new_id()
         with self.db:
             self.db.execute(
                 "INSERT INTO artifacts(id,path,sha256,created_at) VALUES(?,?,?,?)",
-                (artifact_id, uri, digest, now()),
+                (artifact_id, f"raw/{digest}", digest, now()),
             )
             self.db.execute(
                 "INSERT INTO artifact_details VALUES(?,?,?,?,?)",
-                (artifact_id, uri, len(content.encode("utf-8")), "text/plain", "manual"),
+                (artifact_id, uri, len(data), "application/json", "manual"),
             )
             append_audit_event(
                 self.db,
@@ -374,12 +391,51 @@ class Store:
                 object_id=artifact_id,
                 payload={
                     "sha256": digest,
-                    "size_bytes": len(content.encode("utf-8")),
+                    "size_bytes": len(data),
                     "kind": "manual",
                     "uri": uri,
                 },
             )
         return artifact_id, digest
+
+    def rebuild_catalog(self) -> dict:
+        accounts = [dict(row) for row in self.db.execute("SELECT * FROM accounts ORDER BY created_at,id")]
+        imports = [
+            dict(row)
+            for row in self.db.execute(
+                """SELECT i.id,i.artifact_id,i.created_at,d.adapter_name,d.adapter_version,
+                          d.schema_version,d.input_rows,d.inserted_rows,a.path,a.sha256,
+                          ad.source_path,ad.artifact_kind
+                   FROM imports i
+                   JOIN import_details d ON d.import_id=i.id
+                   JOIN artifacts a ON a.id=i.artifact_id
+                   JOIN artifact_details ad ON ad.artifact_id=a.id
+                   ORDER BY i.created_at,i.id"""
+            )
+        ]
+        for item in imports:
+            item["raw_path"] = str(self.raw_root / item["sha256"])
+            item["account_ids"] = [
+                row[0]
+                for row in self.db.execute(
+                    """SELECT DISTINCT account_id FROM imported_rows
+                       WHERE artifact_id=? ORDER BY account_id""",
+                    (item["artifact_id"],),
+                )
+            ]
+        return {"accounts": accounts, "imports": imports}
+
+    def imported_transaction_mapping(self, account_id: str, artifact_id: str) -> dict[str, str]:
+        self.require_account(account_id)
+        require_uuid(artifact_id, "artifact_id")
+        return {
+            row["external_id"]: row["transaction_id"]
+            for row in self.db.execute(
+                """SELECT external_id,transaction_id FROM imported_rows
+                   WHERE account_id=? AND artifact_id=? ORDER BY external_id""",
+                (account_id, artifact_id),
+            )
+        }
 
     def create_account(self, institution: str, name: str) -> str:
         if not institution.strip() or not name.strip():
@@ -452,6 +508,13 @@ class Store:
                 },
             )
         return instrument_id
+
+    def instrument_details(self, instrument_id: str) -> sqlite3.Row:
+        require_uuid(instrument_id, "instrument_id")
+        row = self.db.execute("SELECT * FROM instruments WHERE id=?", (instrument_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown instrument: {instrument_id}")
+        return row
 
     def import_batch(
         self,
@@ -615,6 +678,136 @@ class Store:
                 },
             )
 
+    def add_fx_conversion(self, transaction: Transaction, conversion: FxConversion) -> None:
+        if conversion.transaction_id != transaction.id or transaction.type != "fx_conversion":
+            raise ValueError("FX metadata must reference an FX conversion transaction")
+        with self.db:
+            self._insert_transaction(transaction)
+            self.db.execute(
+                "INSERT INTO fx_conversions VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    transaction.id,
+                    conversion.from_currency,
+                    conversion.to_currency,
+                    canonical_decimal(conversion.from_amount),
+                    canonical_decimal(conversion.to_amount),
+                    canonical_decimal(conversion.rate),
+                    canonical_decimal(conversion.fee),
+                    conversion.fee_currency,
+                ),
+            )
+            self._audit_transaction(transaction)
+            append_audit_event(
+                self.db,
+                operation="ledger.record_fx_conversion",
+                object_type="fx_conversion",
+                object_id=transaction.id,
+                payload={
+                    "from_currency": conversion.from_currency,
+                    "to_currency": conversion.to_currency,
+                    "from_amount": canonical_decimal(conversion.from_amount),
+                    "to_amount": canonical_decimal(conversion.to_amount),
+                    "rate": canonical_decimal(conversion.rate),
+                    "fee": canonical_decimal(conversion.fee),
+                    "fee_currency": conversion.fee_currency,
+                },
+            )
+
+    def add_security_transfer(
+        self,
+        transfer: SecurityTransfer,
+        source_transaction: Transaction,
+        destination_transaction: Transaction,
+    ) -> None:
+        if (
+            transfer.source_transaction_id != source_transaction.id
+            or transfer.destination_transaction_id != destination_transaction.id
+        ):
+            raise ValueError("security transfer metadata does not match transactions")
+        if source_transaction.account_id == destination_transaction.account_id:
+            raise ValueError("security transfer accounts must be distinct")
+        with self.db:
+            self._insert_transaction(source_transaction)
+            self._insert_transaction(destination_transaction)
+            self.db.execute(
+                "INSERT INTO security_transfers VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    transfer.id,
+                    source_transaction.id,
+                    destination_transaction.id,
+                    transfer.instrument_id,
+                    canonical_decimal(transfer.quantity),
+                    canonical_decimal(transfer.carried_basis),
+                    transfer.currency,
+                    now(),
+                ),
+            )
+            for sequence, allocation in enumerate(transfer.allocations, 1):
+                self.db.execute(
+                    "INSERT INTO security_transfer_allocations VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        transfer.id,
+                        sequence,
+                        allocation.source_transaction_id,
+                        allocation.acquired_at,
+                        canonical_decimal(allocation.quantity),
+                        canonical_decimal(allocation.basis),
+                        allocation.currency,
+                    ),
+                )
+            self._audit_transaction(source_transaction)
+            self._audit_transaction(destination_transaction)
+            append_audit_event(
+                self.db,
+                operation="ledger.record_security_transfer",
+                object_type="security_transfer",
+                object_id=transfer.id,
+                payload={
+                    "source_transaction_id": source_transaction.id,
+                    "destination_transaction_id": destination_transaction.id,
+                    "instrument_id": transfer.instrument_id,
+                    "quantity": canonical_decimal(transfer.quantity),
+                    "carried_basis": canonical_decimal(transfer.carried_basis),
+                    "currency": transfer.currency,
+                    "allocation_count": len(transfer.allocations),
+                },
+            )
+
+    def add_corporate_action(
+        self, transaction: Transaction, action: CorporateAction
+    ) -> None:
+        if action.transaction_id != transaction.id or transaction.type != action.action_type:
+            raise ValueError("corporate action metadata does not match transaction")
+        with self.db:
+            self._insert_transaction(transaction)
+            self.db.execute(
+                "INSERT INTO corporate_actions VALUES(?,?,?,?,?,?,?)",
+                (
+                    action.id,
+                    transaction.id,
+                    action.instrument_id,
+                    action.action_type,
+                    canonical_decimal(action.numerator),
+                    canonical_decimal(action.denominator),
+                    now(),
+                ),
+            )
+            self._audit_transaction(transaction)
+            append_audit_event(
+                self.db,
+                operation="ledger.record_corporate_action",
+                object_type="corporate_action",
+                object_id=action.id,
+                payload={
+                    "transaction_id": transaction.id,
+                    "instrument_id": action.instrument_id,
+                    "action_type": action.action_type,
+                    "numerator": canonical_decimal(action.numerator),
+                    "denominator": canonical_decimal(action.denominator),
+                },
+            )
+
     def _audit_transaction(self, transaction: Transaction) -> None:
         append_audit_event(
             self.db,
@@ -669,6 +862,10 @@ class Store:
                 transaction.import_batch_id,
             ),
         )
+        self.db.execute(
+            "INSERT INTO transaction_order VALUES(?,?)",
+            (transaction.id, transaction.source_sequence),
+        )
         for leg in transaction.legs:
             self.require_account(leg.account_id)
             if leg.instrument_id is not None and self.db.execute(
@@ -695,16 +892,28 @@ class Store:
                 (transaction.id, transaction.corrects_transaction_id, transaction.description),
             )
 
-    def transactions(self, account_id: str, as_of: str | None = None) -> list[sqlite3.Row]:
+    def transactions(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        known_as_of: str | None = None,
+    ) -> list[sqlite3.Row]:
         self.require_account(account_id)
         query = "SELECT * FROM transactions WHERE account_id=?"
         arguments: list[str] = [account_id]
         if as_of is not None:
-            cutoff = canonical_timestamp(as_of)
-            query += " AND effective_at<=? AND known_at<=?"
-            arguments.extend((cutoff, cutoff))
+            query += " AND effective_at<=?"
+            arguments.append(canonical_timestamp(as_of))
+        knowledge_cutoff = known_as_of if known_as_of is not None else as_of
+        if knowledge_cutoff is not None:
+            query += " AND known_at<=?"
+            arguments.append(canonical_timestamp(knowledge_cutoff))
         return self.db.execute(
-            query + " ORDER BY effective_at, known_at, recorded_at, id", arguments
+            query
+            + """ ORDER BY effective_at, known_at, recorded_at,
+                         COALESCE((SELECT source_sequence FROM transaction_order o
+                                   WHERE o.transaction_id=transactions.id), 0), id""",
+            arguments,
         ).fetchall()
 
     def transaction(self, transaction_id: str) -> sqlite3.Row | None:
@@ -716,6 +925,47 @@ class Store:
         return self.db.execute(
             "SELECT * FROM legs WHERE transaction_id=? ORDER BY id", (transaction_id,)
         ).fetchall()
+
+    def transaction_metadata(self, transaction_id: str) -> dict:
+        require_uuid(transaction_id, "transaction_id")
+        result: dict = {}
+        fx = self.db.execute(
+            "SELECT * FROM fx_conversions WHERE transaction_id=?", (transaction_id,)
+        ).fetchone()
+        if fx is not None:
+            result["fx_conversion"] = dict(fx)
+        action = self.db.execute(
+            "SELECT * FROM corporate_actions WHERE transaction_id=?", (transaction_id,)
+        ).fetchone()
+        if action is not None:
+            result["corporate_action"] = dict(action)
+        transfer = self.db.execute(
+            """SELECT * FROM security_transfers
+               WHERE source_transaction_id=? OR destination_transaction_id=?""",
+            (transaction_id, transaction_id),
+        ).fetchone()
+        if transfer is not None:
+            transfer_data = dict(transfer)
+            transfer_data["allocations"] = [
+                dict(row)
+                for row in self.db.execute(
+                    """SELECT source_transaction_id,acquired_at,quantity,basis,currency
+                       FROM security_transfer_allocations
+                       WHERE security_transfer_id=? ORDER BY sequence""",
+                    (transfer["id"],),
+                )
+            ]
+            result["security_transfer"] = transfer_data
+        return result
+
+    def corporate_action_transaction(self, action_id: str) -> str:
+        require_uuid(action_id, "action_id")
+        row = self.db.execute(
+            "SELECT transaction_id FROM corporate_actions WHERE id=?", (action_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown corporate action: {action_id}")
+        return row["transaction_id"]
 
     def record_reconciliation(
         self,
@@ -751,6 +1001,20 @@ class Store:
                     json.dumps(differences, sort_keys=True, separators=(",", ":")),
                 ),
             )
+            for currency, value in sorted(observed.get("cash_by_currency", {}).items()):
+                self.db.execute(
+                    "INSERT INTO reconciliation_observations VALUES(?,?,?,?,?,?)",
+                    (new_id(), record_id, "cash", None, currency, canonical_decimal(value)),
+                )
+            for instrument_id, value in sorted(observed.get("positions", {}).items()):
+                if self.db.execute(
+                    "SELECT 1 FROM instruments WHERE id=?", (instrument_id,)
+                ).fetchone() is None:
+                    raise KeyError(f"unknown instrument: {instrument_id}")
+                self.db.execute(
+                    "INSERT INTO reconciliation_observations VALUES(?,?,?,?,?,?)",
+                    (new_id(), record_id, "position", instrument_id, None, canonical_decimal(value)),
+                )
             append_audit_event(
                 self.db,
                 operation="ledger.reconcile",
