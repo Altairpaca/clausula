@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
+from typing import Any, ContextManager, Iterable, Mapping, Protocol, runtime_checkable
 
 from clausula.domain import (
     CorporateAction,
@@ -10,6 +10,9 @@ from clausula.domain import (
     FxConversion,
     InstrumentIdentifier,
     MarketPrice,
+    InvestmentPolicy,
+    PolicyRule,
+    PolicyVersion,
     Portfolio,
     PortfolioMembershipEvent,
     SecurityTransfer,
@@ -113,6 +116,8 @@ class LedgerRepository(Protocol):
 
 @runtime_checkable
 class CoreRepository(LedgerRepository, Protocol):
+    def write_transaction(self) -> ContextManager[None]: ...
+
     def integrity_check(self) -> str: ...
 
     def verify_audit_chain(self) -> dict[str, Any]: ...
@@ -164,3 +169,30 @@ class CoreRepository(LedgerRepository, Protocol):
     def portfolio_accounts(
         self, portfolio_id: str, as_of: str, known_as_of: str | None = None
     ) -> list[str]: ...
+
+    def add_policy(
+        self,
+        policy: InvestmentPolicy,
+        version: PolicyVersion,
+        rules: Iterable[PolicyRule],
+    ) -> None: ...
+
+    def add_policy_version(
+        self, version: PolicyVersion, rules: Iterable[PolicyRule]
+    ) -> None: ...
+
+    def policy(self, policy_id: str) -> Mapping[str, Any]: ...
+
+    def policies(
+        self, portfolio_id: str | None = None
+    ) -> list[Mapping[str, Any]]: ...
+
+    def next_policy_version_number(self, policy_id: str) -> int: ...
+
+    def policy_version_at(
+        self, policy_id: str, as_of: str, known_as_of: str | None = None
+    ) -> Mapping[str, Any]: ...
+
+    def policy_versions(self, policy_id: str) -> list[Mapping[str, Any]]: ...
+
+    def policy_rules(self, policy_version_id: str) -> list[Mapping[str, Any]]: ...

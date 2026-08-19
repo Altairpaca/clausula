@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-from typing import Iterable
+from contextlib import contextmanager
+from typing import Iterable, Iterator
 
 from .audit import append_audit_event, verify_audit_chain
 from .backup import (
@@ -24,9 +25,12 @@ from clausula.domain import (
     FxRate,
     FxConversion,
     InstrumentIdentifier,
+    InvestmentPolicy,
     MarketPrice,
     Portfolio,
     PortfolioMembershipEvent,
+    PolicyRule,
+    PolicyVersion,
     SecurityTransfer,
     Transaction,
     canonical_decimal,
@@ -250,6 +254,21 @@ class Store:
     def close(self) -> None:
         self.db.close()
 
+    @contextmanager
+    def write_transaction(self) -> Iterator[None]:
+        """Join an existing write transaction or commit a standalone one."""
+        if self.db.in_transaction:
+            yield
+            return
+        self.db.execute("BEGIN")
+        try:
+            yield
+        except Exception:
+            self.db.rollback()
+            raise
+        else:
+            self.db.commit()
+
     def integrity_check(self) -> str:
         return self.db.execute("PRAGMA integrity_check").fetchone()[0]
 
@@ -380,7 +399,7 @@ class Store:
                 temporary.unlink(missing_ok=True)
             stored.chmod(0o444)
         artifact_id = new_id()
-        with self.db:
+        with self.write_transaction():
             self.db.execute(
                 "INSERT INTO artifacts(id,path,sha256,created_at) VALUES(?,?,?,?)",
                 (artifact_id, f"raw/{digest}", digest, now()),
@@ -435,7 +454,30 @@ class Store:
                     (item["artifact_id"],),
                 )
             ]
-        return {"accounts": accounts, "portfolios": portfolios, "imports": imports}
+        policies = []
+        for policy in self.db.execute(
+            "SELECT * FROM investment_policies ORDER BY created_at,id"
+        ):
+            versions = []
+            for version in self.db.execute(
+                "SELECT * FROM policy_versions WHERE policy_id=? ORDER BY version_number,id",
+                (policy["id"],),
+            ):
+                rules = [
+                    dict(rule)
+                    for rule in self.db.execute(
+                        "SELECT * FROM policy_rules WHERE policy_version_id=? ORDER BY rule_key,id",
+                        (version["id"],),
+                    )
+                ]
+                versions.append({"version": dict(version), "rules": rules})
+            policies.append({"policy": dict(policy), "versions": versions})
+        return {
+            "accounts": accounts,
+            "portfolios": portfolios,
+            "policies": policies,
+            "imports": imports,
+        }
 
     def imported_transaction_mapping(self, account_id: str, artifact_id: str) -> dict[str, str]:
         self.require_account(account_id)
@@ -846,6 +888,212 @@ class Store:
         ).fetchall()
         return [row["account_id"] for row in rows if row["action"] == "add"]
 
+    @staticmethod
+    def _policy_version_values(version: PolicyVersion) -> tuple:
+        return (
+            version.id,
+            version.policy_id,
+            version.version_number,
+            version.effective_from,
+            version.known_at,
+            version.recorded_at,
+            version.rules_sha256,
+            version.source_artifact_id,
+            version.import_batch_id,
+        )
+
+    @staticmethod
+    def _policy_rule_values(rule: PolicyRule) -> tuple:
+        return (
+            rule.id,
+            rule.policy_version_id,
+            rule.rule_key,
+            rule.rule_type,
+            rule.severity,
+            rule.description,
+            rule.subject,
+            None if rule.target is None else canonical_decimal(rule.target),
+            None
+            if rule.lower_bound is None
+            else canonical_decimal(rule.lower_bound),
+            None
+            if rule.upper_bound is None
+            else canonical_decimal(rule.upper_bound),
+        )
+
+    def add_policy(
+        self,
+        policy: InvestmentPolicy,
+        version: PolicyVersion,
+        rules: Iterable[PolicyRule],
+    ) -> None:
+        self.portfolio(policy.portfolio_id)
+        rule_rows = tuple(rules)
+        if version.policy_id != policy.id:
+            raise ValueError("policy version belongs to a different policy")
+        if not rule_rows:
+            raise ValueError("policy version requires at least one rule")
+        if (
+            policy.source_artifact_id != version.source_artifact_id
+            or policy.import_batch_id != version.import_batch_id
+        ):
+            raise ValueError("policy and version provenance must match")
+        if any(rule.policy_version_id != version.id for rule in rule_rows):
+            raise ValueError("policy rule belongs to a different version")
+        self._require_import_artifact(version.source_artifact_id, version.import_batch_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO investment_policies VALUES(?,?,?,?,?,?)",
+                (
+                    policy.id,
+                    policy.portfolio_id,
+                    policy.name,
+                    policy.created_at,
+                    policy.source_artifact_id,
+                    policy.import_batch_id,
+                ),
+            )
+            self.db.execute(
+                "INSERT INTO policy_versions VALUES(?,?,?,?,?,?,?,?,?)",
+                self._policy_version_values(version),
+            )
+            self.db.executemany(
+                "INSERT INTO policy_rules VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (self._policy_rule_values(rule) for rule in rule_rows),
+            )
+            append_audit_event(
+                self.db,
+                operation="policy.create",
+                object_type="investment_policy",
+                object_id=policy.id,
+                payload={
+                    "portfolio_id": policy.portfolio_id,
+                    "policy_version_id": version.id,
+                    "version_number": version.version_number,
+                    "rules_sha256": version.rules_sha256,
+                    "rule_count": len(rule_rows),
+                    "source_artifact_id": version.source_artifact_id,
+                    "import_batch_id": version.import_batch_id,
+                },
+            )
+
+    def add_policy_version(
+        self, version: PolicyVersion, rules: Iterable[PolicyRule]
+    ) -> None:
+        self.policy(version.policy_id)
+        rule_rows = tuple(rules)
+        if not rule_rows:
+            raise ValueError("policy version requires at least one rule")
+        if any(rule.policy_version_id != version.id for rule in rule_rows):
+            raise ValueError("policy rule belongs to a different version")
+        self._require_import_artifact(version.source_artifact_id, version.import_batch_id)
+        expected_number = self.next_policy_version_number(version.policy_id)
+        if version.version_number != expected_number:
+            raise ValueError(
+                f"policy version_number must be {expected_number}, got {version.version_number}"
+            )
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO policy_versions VALUES(?,?,?,?,?,?,?,?,?)",
+                self._policy_version_values(version),
+            )
+            self.db.executemany(
+                "INSERT INTO policy_rules VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (self._policy_rule_values(rule) for rule in rule_rows),
+            )
+            append_audit_event(
+                self.db,
+                operation="policy.add_version",
+                object_type="policy_version",
+                object_id=version.id,
+                payload={
+                    "policy_id": version.policy_id,
+                    "version_number": version.version_number,
+                    "effective_from": version.effective_from,
+                    "known_at": version.known_at,
+                    "rules_sha256": version.rules_sha256,
+                    "rule_count": len(rule_rows),
+                    "source_artifact_id": version.source_artifact_id,
+                    "import_batch_id": version.import_batch_id,
+                },
+            )
+
+    def _require_import_artifact(self, artifact_id: str, import_batch_id: str) -> None:
+        artifact = self.db.execute(
+            "SELECT 1 FROM artifacts WHERE id=?", (artifact_id,)
+        ).fetchone()
+        batch = self.db.execute(
+            "SELECT artifact_id FROM imports WHERE id=?", (import_batch_id,)
+        ).fetchone()
+        if artifact is None or batch is None or batch["artifact_id"] != artifact_id:
+            raise ValueError(
+                "policy provenance must reference a matching artifact and import batch"
+            )
+
+    def policy(self, policy_id: str) -> sqlite3.Row:
+        require_uuid(policy_id, "policy_id")
+        row = self.db.execute(
+            "SELECT * FROM investment_policies WHERE id=?", (policy_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown policy: {policy_id}")
+        return row
+
+    def policies(self, portfolio_id: str | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM investment_policies"
+        arguments: tuple[str, ...] = ()
+        if portfolio_id is not None:
+            require_uuid(portfolio_id, "portfolio_id")
+            query += " WHERE portfolio_id=?"
+            arguments = (portfolio_id,)
+        return self.db.execute(query + " ORDER BY created_at,id", arguments).fetchall()
+
+    def next_policy_version_number(self, policy_id: str) -> int:
+        self.policy(policy_id)
+        return self.db.execute(
+            "SELECT coalesce(max(version_number),0)+1 FROM policy_versions WHERE policy_id=?",
+            (policy_id,),
+        ).fetchone()[0]
+
+    def policy_version_at(
+        self, policy_id: str, as_of: str, known_as_of: str | None = None
+    ) -> sqlite3.Row:
+        self.policy(policy_id)
+        effective_cutoff = canonical_timestamp(as_of)
+        knowledge_cutoff = canonical_timestamp(known_as_of or as_of)
+        row = self.db.execute(
+            """SELECT * FROM policy_versions
+               WHERE policy_id=? AND effective_from<=? AND known_at<=?
+               ORDER BY effective_from DESC,known_at DESC,version_number DESC,id DESC
+               LIMIT 1""",
+            (policy_id, effective_cutoff, knowledge_cutoff),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"no policy version for {policy_id} at effective={effective_cutoff} known={knowledge_cutoff}"
+            )
+        return row
+
+    def policy_versions(self, policy_id: str) -> list[sqlite3.Row]:
+        self.policy(policy_id)
+        return self.db.execute(
+            "SELECT * FROM policy_versions WHERE policy_id=? ORDER BY version_number,id",
+            (policy_id,),
+        ).fetchall()
+
+    def policy_rules(self, policy_version_id: str) -> list[sqlite3.Row]:
+        require_uuid(policy_version_id, "policy_version_id")
+        exists = self.db.execute(
+            "SELECT 1 FROM policy_versions WHERE id=?", (policy_version_id,)
+        ).fetchone()
+        if exists is None:
+            raise KeyError(f"unknown policy version: {policy_version_id}")
+        return self.db.execute(
+            """SELECT * FROM policy_rules WHERE policy_version_id=?
+               ORDER BY rule_key,id""",
+            (policy_version_id,),
+        ).fetchall()
+
     def import_batch(
         self,
         artifact_id: str,
@@ -855,7 +1103,7 @@ class Store:
         schema_version: str = "1",
     ) -> str:
         batch_id = new_id()
-        with self.db:
+        with self.write_transaction():
             self._insert_import_batch(
                 batch_id,
                 artifact_id,

@@ -8,6 +8,7 @@ from clausula.domain import TransactionLeg, canonical_decimal, dec
 
 from .ledger import MANUAL_EVENT_FORMAT, LedgerService
 from .market import MarketService
+from .policy import POLICY_EVENT_FORMAT, PolicyService
 from .portfolio import PORTFOLIO_EVENT_FORMAT, PortfolioService
 from .ports import CoreRepository
 
@@ -26,15 +27,24 @@ class LedgerRebuilder:
     def rebuild(self) -> dict[str, Any]:
         catalog = self.source.rebuild_catalog()
         target_catalog = self.target.rebuild_catalog()
-        if target_catalog["accounts"] or target_catalog["portfolios"] or target_catalog["imports"]:
+        if (
+            target_catalog["accounts"]
+            or target_catalog["portfolios"]
+            or target_catalog.get("policies")
+            or target_catalog["imports"]
+        ):
             raise RebuildError("target repository must be empty")
         target_service = LedgerService(self.target)
         target_market = MarketService(self.target)
         target_portfolios = PortfolioService(self.target)
+        target_policies = PolicyService(self.target)
         account_mapping: dict[str, str] = {}
         transaction_mapping: dict[str, str] = {}
         instrument_mapping: dict[str, str] = {}
         portfolio_mapping: dict[str, str] = {}
+        policy_mapping: dict[str, str] = {}
+        policy_version_mapping: dict[str, str] = {}
+        policy_rule_mapping: dict[str, str] = {}
         for account in catalog["accounts"]:
             account_mapping[account["id"]] = target_service.create_account(
                 account["institution"], account["name"]
@@ -128,17 +138,28 @@ class LedgerRebuilder:
                 if event.get("format") not in {
                     MANUAL_EVENT_FORMAT,
                     PORTFOLIO_EVENT_FORMAT,
+                    POLICY_EVENT_FORMAT,
                 }:
                     raise ValueError("unknown manual event format")
-                result = self._replay_manual_event(
-                    target_service,
-                    target_portfolios,
-                    event,
-                    account_mapping,
-                    instrument_mapping,
-                    transaction_mapping,
-                    portfolio_mapping,
-                )
+                if event["format"] == POLICY_EVENT_FORMAT:
+                    result = self._replay_policy_event(
+                        target_policies,
+                        event,
+                        portfolio_mapping,
+                        policy_mapping,
+                        policy_version_mapping,
+                        policy_rule_mapping,
+                    )
+                else:
+                    result = self._replay_manual_event(
+                        target_service,
+                        target_portfolios,
+                        event,
+                        account_mapping,
+                        instrument_mapping,
+                        transaction_mapping,
+                        portfolio_mapping,
+                    )
                 replayed.append(
                     {
                         "kind": "manual_event",
@@ -223,17 +244,168 @@ class LedgerRebuilder:
                     "target_accounts": target_accounts,
                 }
             )
+        policy_comparisons = []
+        for source_entry in catalog.get("policies", []):
+            source_policy = source_entry["policy"]
+            source_policy_id = source_policy["id"]
+            target_policy_id = policy_mapping.get(source_policy_id)
+            matches = target_policy_id is not None
+            target_entry = None
+            if target_policy_id is not None:
+                target_policy = dict(self.target.policy(target_policy_id))
+                target_versions = [
+                    {
+                        "version": dict(version),
+                        "rules": [
+                            dict(rule)
+                            for rule in self.target.policy_rules(version["id"])
+                        ],
+                    }
+                    for version in self.target.policy_versions(target_policy_id)
+                ]
+                target_entry = {"policy": target_policy, "versions": target_versions}
+                matches = matches and (
+                    target_policy["name"] == source_policy["name"]
+                    and target_policy["created_at"] == source_policy["created_at"]
+                    and target_policy["portfolio_id"]
+                    == portfolio_mapping[source_policy["portfolio_id"]]
+                )
+                source_versions = source_entry["versions"]
+                if len(source_versions) != len(target_versions):
+                    matches = False
+                else:
+                    for source_version, target_version in zip(
+                        source_versions, target_versions
+                    ):
+                        sv = source_version["version"]
+                        tv = target_version["version"]
+                        source_rules = [
+                            self._policy_rule_semantics(rule)
+                            for rule in source_version["rules"]
+                        ]
+                        target_rules = [
+                            self._policy_rule_semantics(rule)
+                            for rule in target_version["rules"]
+                        ]
+                        matches = matches and (
+                            sv["version_number"] == tv["version_number"]
+                            and sv["effective_from"] == tv["effective_from"]
+                            and sv["known_at"] == tv["known_at"]
+                            and sv["recorded_at"] == tv["recorded_at"]
+                            and sv["rules_sha256"] == tv["rules_sha256"]
+                            and source_rules == target_rules
+                        )
+            consistent = consistent and matches
+            policy_comparisons.append(
+                {
+                    "source_policy_id": source_policy_id,
+                    "target_policy_id": target_policy_id,
+                    "matches": matches,
+                    "source": source_entry,
+                    "target": target_entry,
+                }
+            )
         return {
             "consistent": consistent and not warnings,
             "account_mapping": account_mapping,
             "instrument_mapping": instrument_mapping,
             "transaction_mapping": transaction_mapping,
             "portfolio_mapping": portfolio_mapping,
+            "policy_mapping": policy_mapping,
+            "policy_version_mapping": policy_version_mapping,
+            "policy_rule_mapping": policy_rule_mapping,
             "replayed_imports": replayed,
             "comparisons": comparisons,
             "portfolio_comparisons": portfolio_comparisons,
+            "policy_comparisons": policy_comparisons,
             "warnings": warnings,
         }
+
+    @staticmethod
+    def _policy_rule_semantics(rule: dict[str, Any]) -> tuple:
+        return (
+            rule["rule_key"],
+            rule["rule_type"],
+            rule["severity"],
+            rule["description"],
+            rule["subject"],
+            rule["target"],
+            rule["lower_bound"],
+            rule["upper_bound"],
+        )
+
+    @staticmethod
+    def _policy_rule_definitions(event: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in definition.items() if key != "id"}
+            for definition in event["rules"]
+        ]
+
+    def _replay_policy_event(
+        self,
+        policies: PolicyService,
+        event: dict[str, Any],
+        portfolio_mapping: dict[str, str],
+        policy_mapping: dict[str, str],
+        policy_version_mapping: dict[str, str],
+        policy_rule_mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        if event.get("schema_version") != "1":
+            raise ValueError("unsupported policy event schema version")
+        operation = event["operation"]
+        definitions = self._policy_rule_definitions(event)
+        if operation == "policy.create":
+            target = policies.create(
+                portfolio_mapping[event["portfolio_id"]],
+                event["name"],
+                event["effective_from"],
+                definitions,
+                known_at=event["known_at"],
+                created_at=event["created_at"],
+                recorded_at=event["recorded_at"],
+            )
+            if (
+                target["rules_sha256"] != event["rules_sha256"]
+                or target["version_number"] != event["version_number"]
+            ):
+                raise RebuildError("policy create semantics changed during rebuild")
+            policy_mapping[event["policy_id"]] = target["policy_id"]
+            policy_version_mapping[event["policy_version_id"]] = target[
+                "policy_version_id"
+            ]
+            target_rules = self.target.policy_rules(target["policy_version_id"])
+            target_by_key = {row["rule_key"]: row["id"] for row in target_rules}
+            for source_rule in event["rules"]:
+                if "id" in source_rule:
+                    policy_rule_mapping[source_rule["id"]] = target_by_key[
+                        source_rule["key"]
+                    ]
+            return target
+        if operation == "policy.add_version":
+            target = policies.add_version(
+                policy_mapping[event["policy_id"]],
+                event["effective_from"],
+                definitions,
+                known_at=event["known_at"],
+                recorded_at=event["recorded_at"],
+            )
+            if (
+                target["rules_sha256"] != event["rules_sha256"]
+                or target["version_number"] != event["version_number"]
+            ):
+                raise RebuildError("policy version semantics changed during rebuild")
+            policy_version_mapping[event["policy_version_id"]] = target[
+                "policy_version_id"
+            ]
+            target_rules = self.target.policy_rules(target["policy_version_id"])
+            target_by_key = {row["rule_key"]: row["id"] for row in target_rules}
+            for source_rule in event["rules"]:
+                if "id" in source_rule:
+                    policy_rule_mapping[source_rule["id"]] = target_by_key[
+                        source_rule["key"]
+                    ]
+            return target
+        raise ValueError(f"unsupported policy operation: {operation}")
 
     def _map_instrument(
         self,

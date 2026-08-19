@@ -5,6 +5,7 @@ from .ports import CoreRepository, LedgerRepository
 from .rebuild import LedgerRebuilder, RebuildError
 from .market import MarketImportError, MarketService
 from .portfolio import PortfolioService
+from .policy import PolicyService
 
 __all__ = [
     "CoreRepository",
@@ -15,5 +16,6 @@ __all__ = [
     "MarketImportError",
     "MarketService",
     "PortfolioService",
+    "PolicyService",
     "RebuildError",
 ]

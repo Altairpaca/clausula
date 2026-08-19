@@ -3,10 +3,9 @@
 - Snapshot date: 2026-08-19, Asia/Taipei
 - Repository: `/home/altair/projects/clausula`
 - Branch: `main`
-- Last frozen implementation commit: `8f48bcf feat: complete market and portfolio analytics vertical slice`
-- Documentation checkpoint: committed immediately after M3 while M4 remains uncommitted
-- Persistent objective status at checkpoint: paused by user interruption
-- Current phase: M4 Policy as Code, uncommitted and not frozen
+- Last frozen implementation: `feat: complete versioned investment policy vertical slice` (current `HEAD`)
+- Current phase: M4.5 Planning and Cash Allocation
+- M4 Policy as Code is frozen.
 
 ## Frozen Milestones
 
@@ -75,113 +74,35 @@ docs/adr/0003-ledger-lots-fx-and-corporate-actions.md
 docs/adr/0004-market-portfolio-temporal-analytics.md
 ```
 
-## M4 Policy Work In Progress
+### M4 Policy as Code
 
-M4 当前代码存在于 dirty worktree，不能称为 release candidate。已经实现但尚未完成
-semantic audit 的部分：
+M4 release candidate includes:
 
-- `clausula/domain/policy.py`
-  - `InvestmentPolicy`、`PolicyVersion`、`PolicyRule`；
-  - structured evaluation/result/evidence objects；
-  - 初始 rule types：allocation band、single instrument max、asset type max、cash amount/
-    weight minimum、currency max；
-  - Decimal threshold validation、UUID identity、version temporal fields。
-- `clausula/analytics/policy.py`
-  - deterministic rule evaluation；
-  - incomplete valuation fail closed 为 `unavailable`；
-  - deterministic evaluation UUID；
-  - base-currency-cash funded what-if simulation；
-  - simulation 明确不写 Ledger。
-- `clausula/application/policy.py`
-  - create policy、append policy version、list/evaluate/simulate；
-  - immutable raw policy event envelope、ImportBatch、rules hash；
-  - strict effective/known version selection。
-- SQLite migration v6 与 repository methods；backup export table coverage；typed ports/exports。
-- `tests/test_policy_analytics.py` 与 `tests/test_policy.py`：7 targeted tests passed。
+- Portfolio-owned `InvestmentPolicy`, append-only `PolicyVersion`, and fixed-schema `PolicyRule`;
+- six Decimal-only rule types with inclusive boundaries and strict field shapes;
+- effective/known/recorded temporal selection with backdated anti-lookahead tests;
+- deterministic evaluation/evidence and fail-closed incomplete valuation;
+- deterministic base-currency-cash simulation with no Ledger or audit mutation;
+- stable semantic rule checksum, deterministic per-version rule IDs, and raw event IDs;
+- atomic raw/import/canonical/audit writes for create and append-version operations;
+- schema migration v6, append-only triggers, canonical export, backup/restore, and clean rebuild;
+- policy/version/rule rebuild ID maps and semantic comparisons;
+- `policy.create`, `policy.add_version`, `policy.list`, `policy.evaluate`, and `policy.simulate`;
+- permission, confirmation, dry-run, CLI, SDK, temporal, boundary, and adversarial tests.
 
-## Exact Test State
+Policy evaluations remain deterministic ephemeral analytical outputs. They are not canonical facts and
+are not persisted in M4. Simulation is not a Plan, Recommendation, Decision, or Transaction.
 
-Checkpoint 时完整命令：
+Accepted M4 references:
 
 ```text
-pytest -q
+docs/adr/0005-policy-as-code-and-simulation.md
+docs/reference/policy-rules.md
 ```
 
-结果：
-
-```text
-70 passed, 2 failed
-```
-
-失败不是 Policy 行为失败，而是两个既有 migration assertions 仍预期 schema v5：
-
-1. `tests/test_kernel_infrastructure.py::test_migrations_are_ordered_and_checksummed`
-   需要加入 `(6, "versioned_investment_policy", 64)`。
-2. `tests/test_persistence_contracts.py::test_pre_versioned_database_is_upgraded_without_rewriting_facts`
-   需要将 expected user/schema versions 从 5 更新到 6。
-
-定向结果：
-
-```text
-pytest -q tests/test_policy.py tests/test_policy_analytics.py
-7 passed
-```
-
-## Exact Dirty Worktree
-
-Tracked modifications:
-
-```text
-clausula/adapters/backup.py
-clausula/adapters/migrations.py
-clausula/adapters/sqlite.py
-clausula/analytics/__init__.py
-clausula/application/__init__.py
-clausula/application/ports.py
-clausula/domain/__init__.py
-```
-
-Untracked M4 files:
-
-```text
-clausula/analytics/policy.py
-clausula/application/policy.py
-clausula/domain/policy.py
-tests/test_policy.py
-tests/test_policy_analytics.py
-```
-
-Untracked pre-existing content not created or reviewed as part of M4:
-
-```text
-docs/benchmarks/
-```
-
-Do not delete, overwrite, stage, or claim ownership of `docs/benchmarks/` until its provenance is
-confirmed. The project context documents under `docs/project/` are intentionally created by this
-checkpoint task.
-
-## M4 Remaining Gaps
-
-M4 is not ready to commit until all of the following are complete:
-
-1. Update v6 migration assertions and rerun full tests.
-2. Audit `_rules` normalization and stable rule IDs/checksum behavior.
-3. Add policy capabilities: create, add_version, list, evaluate, simulate.
-4. Add Policy CLI and Python SDK convenience projections.
-5. Add policy event replay to `LedgerRebuilder`, with policy/version ID mappings and comparison.
-6. Add backup/restore round-trip and clean raw rebuild tests for multiple temporal versions.
-7. Add permission/confirmation/dry-run capability contract tests.
-8. Add temporal tests proving a later-known backdated PolicyVersion is invisible at earlier knowledge cutoff.
-9. Add simulation adversarial tests: insufficient cash, oversell/short, float rejection, fee effect,
-   unknown instrument, incomplete valuation, dataset conflict.
-10. Decide and document whether deterministic evaluations remain ephemeral or become versioned
-    analytical artifacts. Current implementation returns them but does not persist them.
-11. Write M4 ADR and metric/rule definition documentation.
-12. Update `capability_mapping.yaml`, architecture docs and milestone status.
-13. Run full suite, compile, diff check, YAML parse, wheel build and installed CLI smoke.
-14. Only then commit with a milestone-scoped message such as
-    `feat: complete versioned investment policy vertical slice`.
+Release verification before freeze: 80 tests passed; Policy targeted tests, compile, diff, and YAML checks
+passed. Wheel build succeeded, and an isolated installed CLI discovered 21 capabilities and executed
+`policy.create`, `policy.evaluate`, and `policy.simulate` successfully.
 
 ## Known Cross-Cutting Risks
 
@@ -192,9 +113,8 @@ M4 is not ready to commit until all of the following are complete:
 - Historical identifier validity ranges and richer account/institution semantics are incomplete.
 - Short positions, jurisdiction-specific tax lots, mergers, spin-offs and cash-in-lieu are deferred.
 - Market core is CSV/local-provider based; network provider adapters and Parquet scale-out remain later work.
-- Policy raw artifact/import creation and canonical insert are separate repository calls. Expected validation
-  failures are prevented before provenance creation, but unexpected storage failure atomicity needs an
-  explicit unit-of-work decision.
+- Content-addressed files can remain as harmless unreferenced bytes after an operating-system failure;
+  policy database provenance and canonical writes are transactional.
 - Performance uses raw daily close, not guaranteed total-return adjusted prices.
 
 ## Verification Commands
@@ -209,5 +129,4 @@ python -m compileall -q clausula tests scripts
 git diff --check
 ```
 
-Do not edit frozen v1-v5 migration SQL. Migration v6 is still unfrozen and may be remediated before the
-M4 commit.
+Do not edit frozen v1-v5 migration SQL. Changes after the M4 freeze require a forward migration.

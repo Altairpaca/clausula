@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from clausula.application import CoreRepository, LedgerService, MarketService, PortfolioService
+from clausula.application import (
+    CoreRepository,
+    LedgerService,
+    MarketService,
+    PolicyService,
+    PortfolioService,
+)
 
 from .registry import CapabilityRegistry, CapabilitySpec, SideEffect, object_schema
 
@@ -11,6 +17,41 @@ from .registry import CapabilityRegistry, CapabilitySpec, SideEffect, object_sch
 STRING = {"type": "string"}
 NULLABLE_STRING = {"type": ["string", "null"]}
 STRING_MAP = {"type": "object", "additionalProperties": {"type": "string"}}
+RULE_VALUE = {"type": ["string", "null"]}
+
+
+def _policy_rule_schema() -> dict[str, Any]:
+    return object_schema(
+        {
+            "key": STRING,
+            "type": STRING,
+            "severity": STRING,
+            "description": STRING,
+            "subject": RULE_VALUE,
+            "target": RULE_VALUE,
+            "lower": RULE_VALUE,
+            "upper": RULE_VALUE,
+        },
+        required=("key", "type"),
+    )
+
+
+def _policy_rules_schema() -> dict[str, Any]:
+    return {"type": "array", "items": _policy_rule_schema()}
+
+
+def _simulation_actions_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "items": object_schema(
+            {
+                "instrument_id": STRING,
+                "base_value_delta": STRING,
+                "fee": STRING,
+            },
+            required=("instrument_id", "base_value_delta"),
+        ),
+    }
 
 
 def _state_schema() -> dict[str, Any]:
@@ -38,6 +79,7 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
     service = LedgerService(repository)
     market = MarketService(repository)
     portfolios = PortfolioService(repository)
+    policies = PolicyService(repository)
     registry = CapabilityRegistry()
     registry.register(
         CapabilitySpec(
@@ -361,6 +403,155 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
         lambda portfolio_id, dates, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: portfolios.performance(
             portfolio_id,
             dates,
+            known_as_of=known_as_of,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "policy.create",
+            "Create an append-only versioned investment policy for a portfolio.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "name": STRING,
+                    "effective_from": STRING,
+                    "known_at": NULLABLE_STRING,
+                    "created_at": NULLABLE_STRING,
+                    "recorded_at": NULLABLE_STRING,
+                    "rules": _policy_rules_schema(),
+                },
+                required=("portfolio_id", "name", "effective_from", "rules"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("policy:write",),
+            True,
+            "Stores normalized rules, immutable source provenance, and an audit event.",
+        ),
+        lambda portfolio_id, name, effective_from, rules, known_at=None, created_at=None, recorded_at=None: policies.create(
+            portfolio_id,
+            name,
+            effective_from,
+            rules,
+            known_at=known_at,
+            created_at=created_at,
+            recorded_at=recorded_at,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "policy.add_version",
+            "Append an immutable policy version with temporal provenance.",
+            object_schema(
+                {
+                    "policy_id": STRING,
+                    "effective_from": STRING,
+                    "known_at": NULLABLE_STRING,
+                    "recorded_at": NULLABLE_STRING,
+                    "rules": _policy_rules_schema(),
+                },
+                required=("policy_id", "effective_from", "rules"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("policy:write",),
+            True,
+            "Version rows and rules are append-only and carry source provenance.",
+        ),
+        lambda policy_id, effective_from, rules, known_at=None, recorded_at=None: policies.add_version(
+            policy_id,
+            effective_from,
+            rules,
+            known_at=known_at,
+            recorded_at=recorded_at,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "policy.list",
+            "List canonical investment policies, optionally scoped to a portfolio.",
+            object_schema({"portfolio_id": NULLABLE_STRING}),
+            {"type": "array", "items": {"type": "object"}},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("policy:read",),
+            False,
+            "Returns stable policy identity and provenance columns.",
+        ),
+        lambda portfolio_id=None: policies.list(portfolio_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "policy.evaluate",
+            "Evaluate the selected policy version against deterministic portfolio valuation.",
+            object_schema(
+                {
+                    "policy_id": STRING,
+                    "as_of": STRING,
+                    "known_as_of": NULLABLE_STRING,
+                    "price_dataset_name": NULLABLE_STRING,
+                    "price_dataset_version": NULLABLE_STRING,
+                    "fx_dataset_name": NULLABLE_STRING,
+                    "fx_dataset_version": NULLABLE_STRING,
+                },
+                required=("policy_id", "as_of"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("policy:read", "portfolio:read", "market:read"),
+            False,
+            "Uses effective and known cutoffs and fails closed on incomplete valuation.",
+        ),
+        lambda policy_id, as_of, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: policies.evaluate(
+            policy_id,
+            as_of,
+            known_as_of=known_as_of,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "policy.simulate",
+            "Evaluate a base-currency-cash what-if without mutating the Ledger.",
+            object_schema(
+                {
+                    "policy_id": STRING,
+                    "as_of": STRING,
+                    "actions": _simulation_actions_schema(),
+                    "known_as_of": NULLABLE_STRING,
+                    "price_dataset_name": NULLABLE_STRING,
+                    "price_dataset_version": NULLABLE_STRING,
+                    "fx_dataset_name": NULLABLE_STRING,
+                    "fx_dataset_version": NULLABLE_STRING,
+                },
+                required=("policy_id", "as_of", "actions"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("policy:read", "portfolio:read", "market:read"),
+            False,
+            "Returns a deterministic hypothetical valuation and policy result only.",
+        ),
+        lambda policy_id, as_of, actions, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: policies.simulate(
+            policy_id,
+            as_of,
+            actions,
             known_as_of=known_as_of,
             price_dataset_name=price_dataset_name,
             price_dataset_version=price_dataset_version,
