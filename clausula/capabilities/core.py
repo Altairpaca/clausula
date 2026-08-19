@@ -7,6 +7,7 @@ from clausula.application import (
     CoreRepository,
     LedgerService,
     MarketService,
+    PlanningService,
     PolicyService,
     PortfolioService,
 )
@@ -48,8 +49,24 @@ def _simulation_actions_schema() -> dict[str, Any]:
                 "instrument_id": STRING,
                 "base_value_delta": STRING,
                 "fee": STRING,
+                "tax_estimate": STRING,
             },
             required=("instrument_id", "base_value_delta"),
+        ),
+    }
+
+
+def _planning_scenarios_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "items": object_schema(
+            {
+                "key": STRING,
+                "description": STRING,
+                "cash_available": STRING,
+                "actions": _simulation_actions_schema(),
+            },
+            required=("key", "actions"),
         ),
     }
 
@@ -80,6 +97,7 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
     market = MarketService(repository)
     portfolios = PortfolioService(repository)
     policies = PolicyService(repository)
+    planning = PlanningService(repository)
     registry = CapabilityRegistry()
     registry.register(
         CapabilitySpec(
@@ -558,6 +576,113 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
             fx_dataset_name=fx_dataset_name,
             fx_dataset_version=fx_dataset_version,
         ),
+    )
+    planning_options = {
+        "known_as_of": NULLABLE_STRING,
+        "price_dataset_name": NULLABLE_STRING,
+        "price_dataset_version": NULLABLE_STRING,
+        "fx_dataset_name": NULLABLE_STRING,
+        "fx_dataset_version": NULLABLE_STRING,
+    }
+    registry.register(
+        CapabilitySpec(
+            "planning.compare",
+            "Compare deterministic cash-allocation scenarios without persisting a Plan.",
+            object_schema(
+                {
+                    "policy_id": STRING,
+                    "as_of": STRING,
+                    "scenarios": _planning_scenarios_schema(),
+                    **planning_options,
+                },
+                required=("policy_id", "as_of", "scenarios"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("planning:read", "policy:read", "portfolio:read", "market:read"),
+            False,
+            "Ranks candidates by feasibility, unresolved constraints, fees, and stable key.",
+        ),
+        lambda policy_id, as_of, scenarios, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: planning.compare(
+            policy_id,
+            as_of,
+            scenarios,
+            known_as_of=known_as_of,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "planning.create",
+            "Persist an immutable deterministic Plan and its projected states.",
+            object_schema(
+                {
+                    "policy_id": STRING,
+                    "name": STRING,
+                    "as_of": STRING,
+                    "scenarios": _planning_scenarios_schema(),
+                    "created_at": NULLABLE_STRING,
+                    "recorded_at": NULLABLE_STRING,
+                    **planning_options,
+                },
+                required=("policy_id", "name", "as_of", "scenarios"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("planning:write", "policy:read", "portfolio:read", "market:read"),
+            True,
+            "Stores source/import provenance, scenarios, actions, projected states, constraints, and audit.",
+        ),
+        lambda policy_id, name, as_of, scenarios, known_as_of=None, created_at=None, recorded_at=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: planning.create(
+            policy_id,
+            name,
+            as_of,
+            scenarios,
+            known_as_of=known_as_of,
+            created_at=created_at,
+            recorded_at=recorded_at,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "planning.list",
+            "List immutable Plans, optionally scoped to one Portfolio.",
+            object_schema({"portfolio_id": NULLABLE_STRING}),
+            {"type": "array", "items": {"type": "object"}},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("planning:read",),
+            False,
+            "Returns Plan identities, temporal cutoffs, policy references, and provenance.",
+        ),
+        lambda portfolio_id=None: planning.list(portfolio_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "planning.get",
+            "Read a Plan with scenarios, actions, projected states, and unresolved constraints.",
+            object_schema({"plan_id": STRING}, required=("plan_id",)),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("planning:read",),
+            False,
+            "Returns persisted deterministic results and does not recompute or mutate the Ledger.",
+        ),
+        lambda plan_id: planning.get(plan_id),
     )
 
     system_methods = {

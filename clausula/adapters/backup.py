@@ -46,6 +46,11 @@ EXPORT_TABLES = (
     "investment_policies",
     "policy_versions",
     "policy_rules",
+    "plans",
+    "plan_scenarios",
+    "plan_actions",
+    "plan_projected_states",
+    "plan_constraints",
 )
 
 

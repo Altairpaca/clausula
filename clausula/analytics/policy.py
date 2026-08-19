@@ -247,6 +247,8 @@ def simulate_base_currency_trades(
     cash = allocation.get("cash", Decimal(0))
     normalized_actions = []
     total_fees = Decimal(0)
+    total_taxes = Decimal(0)
+    has_tax_estimate = False
     for index, raw_action in enumerate(actions):
         try:
             instrument_id = str(raw_action["instrument_id"])
@@ -256,12 +258,15 @@ def simulate_base_currency_trades(
         try:
             delta = dec(raw_action["base_value_delta"])
             fee = dec(raw_action.get("fee", "0"))
+            tax = dec(raw_action.get("tax_estimate", "0"))
         except (KeyError, TypeError, ValueError) as exc:
             raise PolicyEvaluationError(str(exc)) from exc
         if delta == 0:
             raise PolicyEvaluationError("simulation action delta cannot be zero")
         if fee < 0:
             raise PolicyEvaluationError("simulation fee cannot be negative")
+        if tax < 0:
+            raise PolicyEvaluationError("simulation tax estimate cannot be negative")
         current = concentration.get(
             instrument_id,
             {
@@ -271,7 +276,7 @@ def simulate_base_currency_trades(
             },
         )
         new_instrument_value = current["base_value"] + delta
-        new_cash = cash - delta - fee
+        new_cash = cash - delta - fee - tax
         if new_instrument_value < 0:
             raise PolicyEvaluationError("simulation cannot create a short position")
         if new_cash < 0:
@@ -286,16 +291,19 @@ def simulate_base_currency_trades(
         currencies[instrument_currency] = currencies.get(
             instrument_currency, Decimal(0)
         ) + delta
-        currencies[base_currency] = currencies.get(base_currency, Decimal(0)) - delta - fee
-        total -= fee
+        currencies[base_currency] = currencies.get(base_currency, Decimal(0)) - delta - fee - tax
+        total -= fee + tax
         total_fees += fee
-        normalized_actions.append(
-            {
-                "instrument_id": instrument_id,
-                "base_value_delta": canonical_decimal(delta),
-                "fee": canonical_decimal(fee),
-            }
-        )
+        total_taxes += tax
+        normalized_action = {
+            "instrument_id": instrument_id,
+            "base_value_delta": canonical_decimal(delta),
+            "fee": canonical_decimal(fee),
+        }
+        if "tax_estimate" in raw_action:
+            has_tax_estimate = True
+            normalized_action["tax_estimate"] = canonical_decimal(tax)
+        normalized_actions.append(normalized_action)
     if total < 0:
         raise PolicyEvaluationError("simulation cannot create negative total value")
 
@@ -340,6 +348,11 @@ def simulate_base_currency_trades(
         "simulation": {
             "actions": normalized_actions,
             "total_fees": canonical_decimal(total_fees),
+            **(
+                {"total_tax_estimate": canonical_decimal(total_taxes)}
+                if has_tax_estimate
+                else {}
+            ),
             "funding_assumption": "base_currency_cash",
             "ledger_mutated": False,
         },

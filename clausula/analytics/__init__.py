@@ -7,6 +7,7 @@ from .policy import (
     evaluate_policy,
     simulate_base_currency_trades,
 )
+from .planning import compare_plan_scenarios
 
 __all__ = [
     "CostBasisError",
@@ -18,4 +19,5 @@ __all__ = [
     "replay_fifo",
     "xirr",
     "simulate_base_currency_trades",
+    "compare_plan_scenarios",
 ]

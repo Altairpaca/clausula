@@ -55,6 +55,7 @@ def test_migrations_are_ordered_and_checksummed(tmp_path):
         (4, "market_snapshots_and_dataset_versions", 64),
         (5, "portfolio_membership_events", 64),
         (6, "versioned_investment_policy", 64),
+        (7, "deterministic_planning_artifacts", 64),
     ]
 
     store.db.execute("DROP TRIGGER schema_migrations_reject_update")

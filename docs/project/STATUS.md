@@ -4,8 +4,8 @@
 - Repository: `/home/altair/projects/clausula`
 - Branch: `main`
 - Last frozen implementation: `feat: complete versioned investment policy vertical slice` (current `HEAD`)
-- Current phase: M4.5 Planning and Cash Allocation
-- M4 Policy as Code is frozen.
+- Current phase: M5 Decision Intelligence
+- M4 Policy as Code and M4.5 Planning/Cash Allocation are frozen.
 
 ## Frozen Milestones
 
@@ -103,6 +103,29 @@ docs/reference/policy-rules.md
 Release verification before freeze: 80 tests passed; Policy targeted tests, compile, diff, and YAML checks
 passed. Wheel build succeeded, and an isolated installed CLI discovered 21 capabilities and executed
 `policy.create`, `policy.evaluate`, and `policy.simulate` successfully.
+
+### M4.5 Planning and Cash Allocation
+
+M4.5 release candidate includes:
+
+- immutable Portfolio/PolicyVersion-owned `Plan` and named `PlanScenario` rows;
+- base-currency cash funding with deterministic fee and explicit tax estimates;
+- candidate actions, projected states, cash reserve gaps, target allocation gaps, and unresolved constraints;
+- deterministic ranking by feasibility, hard constraints, total constraints, combined costs, and stable key;
+- v7 append-only planning tables, canonical export, backup/restore, and clean rebuild semantic comparison;
+- `planning.compare`, `planning.create`, `planning.list`, and `planning.get` registry capabilities;
+- CLI/SDK projections, confirmation/dry-run/permission tests, and no-Ledger-mutation acceptance stories.
+
+Accepted M4.5 references:
+
+```text
+docs/adr/0006-deterministic-planning-and-cash-allocation.md
+docs/reference/planning.md
+```
+
+M4.5 verification: 85 tests passed; compile, diff, and YAML checks passed. The final wheel built
+successfully, and an isolated installed CLI discovered 25 capabilities and executed
+`planning.compare`, `planning.create`, and `planning.get` successfully.
 
 ## Known Cross-Cutting Risks
 

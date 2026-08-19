@@ -1,5 +1,5 @@
-version: 6
-status: m4_policy_as_code_implemented
+version: 7
+status: m4_5_planning_cash_allocation_implemented
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
     disposition: MIGRATE_WITH_REWRITE
@@ -82,6 +82,12 @@ canonical_m4:
   - policy.evaluate
   - policy.simulate
 
+canonical_m4_5:
+  - planning.compare
+  - planning.create
+  - planning.list
+  - planning.get
+
 implementation_status:
   account.create: implemented
   instrument.resolve: implemented_basic_identifier_registry
@@ -111,6 +117,10 @@ implementation_status:
   policy.list: implemented
   policy.evaluate: implemented_decimal_fail_closed
   policy.simulate: implemented_base_cash_non_mutating
+  planning.compare: implemented_deterministic_scenario_ranking
+  planning.create: implemented_append_only_projected_artifact
+  planning.list: implemented
+  planning.get: implemented_explainable_scenarios
 
 platform_contract:
   registry: implemented

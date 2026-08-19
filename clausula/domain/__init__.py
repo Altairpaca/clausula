@@ -27,6 +27,13 @@ from .ledger import (
 )
 from .market import DatasetVersion, FxRate, MarketPrice, ValuationGap
 from .portfolio import Portfolio, PortfolioMembershipEvent
+from .planning import (
+    CandidateAction,
+    Plan,
+    PlanScenario,
+    ProjectedState,
+    UnresolvedConstraint,
+)
 from .policy import (
     InvestmentPolicy,
     PolicyEvaluation,
@@ -43,6 +50,11 @@ __all__ = [
     "MarketPrice",
     "Portfolio",
     "PortfolioMembershipEvent",
+    "Plan",
+    "PlanScenario",
+    "CandidateAction",
+    "ProjectedState",
+    "UnresolvedConstraint",
     "InvestmentPolicy",
     "PolicyEvaluation",
     "PolicyEvidence",

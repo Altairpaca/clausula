@@ -11,12 +11,17 @@ from clausula.domain import (
     InstrumentIdentifier,
     MarketPrice,
     InvestmentPolicy,
+    CandidateAction,
+    Plan,
+    PlanScenario,
+    ProjectedState,
     PolicyRule,
     PolicyVersion,
     Portfolio,
     PortfolioMembershipEvent,
     SecurityTransfer,
     Transaction,
+    UnresolvedConstraint,
 )
 
 
@@ -196,3 +201,27 @@ class CoreRepository(LedgerRepository, Protocol):
     def policy_versions(self, policy_id: str) -> list[Mapping[str, Any]]: ...
 
     def policy_rules(self, policy_version_id: str) -> list[Mapping[str, Any]]: ...
+
+    def policy_version(self, policy_version_id: str) -> Mapping[str, Any]: ...
+
+    def add_plan(
+        self,
+        plan: Plan,
+        scenarios: Iterable[PlanScenario],
+        actions: Iterable[CandidateAction],
+        constraints: Iterable[UnresolvedConstraint],
+        projected_states: Iterable[ProjectedState],
+        results: Mapping[str, Mapping[str, Any]],
+    ) -> None: ...
+
+    def plan(self, plan_id: str) -> Mapping[str, Any]: ...
+
+    def plans(self, portfolio_id: str | None = None) -> list[Mapping[str, Any]]: ...
+
+    def plan_scenarios(self, plan_id: str) -> list[Mapping[str, Any]]: ...
+
+    def plan_actions(self, scenario_id: str) -> list[Mapping[str, Any]]: ...
+
+    def plan_constraints(self, scenario_id: str) -> list[Mapping[str, Any]]: ...
+
+    def plan_projected_state(self, scenario_id: str) -> Mapping[str, Any]: ...
