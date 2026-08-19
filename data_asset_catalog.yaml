@@ -1,0 +1,297 @@
+{
+  "version": 2,
+  "generated_at": "2026-08-19T05:27:45+00:00",
+  "privacy": {
+    "policy": "Real personal data remains outside Git and is imported only into ~/.clausula.",
+    "catalog_content": "Metadata, paths, sizes, classifications, and hashes only."
+  },
+  "extension_summary": [
+    {
+      "extension": ".archived",
+      "file_count": 1,
+      "size_bytes": 7359
+    },
+    {
+      "extension": ".b64",
+      "file_count": 3,
+      "size_bytes": 1776
+    },
+    {
+      "extension": ".bak",
+      "file_count": 5,
+      "size_bytes": 352008
+    },
+    {
+      "extension": ".bat",
+      "file_count": 1,
+      "size_bytes": 582
+    },
+    {
+      "extension": ".bundle",
+      "file_count": 22,
+      "size_bytes": 2174514248
+    },
+    {
+      "extension": ".cpp",
+      "file_count": 1,
+      "size_bytes": 9993
+    },
+    {
+      "extension": ".csv",
+      "file_count": 110,
+      "size_bytes": 1249754532
+    },
+    {
+      "extension": ".db",
+      "file_count": 4,
+      "size_bytes": 4366336
+    },
+    {
+      "extension": ".db-shm",
+      "file_count": 1,
+      "size_bytes": 32768
+    },
+    {
+      "extension": ".db-wal",
+      "file_count": 1,
+      "size_bytes": 0
+    },
+    {
+      "extension": ".diff",
+      "file_count": 2,
+      "size_bytes": 3913
+    },
+    {
+      "extension": ".disabled",
+      "file_count": 1,
+      "size_bytes": 4387
+    },
+    {
+      "extension": ".docm",
+      "file_count": 2,
+      "size_bytes": 826674
+    },
+    {
+      "extension": ".docx",
+      "file_count": 2,
+      "size_bytes": 46774
+    },
+    {
+      "extension": ".example",
+      "file_count": 3,
+      "size_bytes": 4285
+    },
+    {
+      "extension": ".exitcode",
+      "file_count": 3,
+      "size_bytes": 6
+    },
+    {
+      "extension": ".gz",
+      "file_count": 16,
+      "size_bytes": 332699379
+    },
+    {
+      "extension": ".html",
+      "file_count": 18,
+      "size_bytes": 248102
+    },
+    {
+      "extension": ".ipynb",
+      "file_count": 12,
+      "size_bytes": 127182
+    },
+    {
+      "extension": ".jpg",
+      "file_count": 2,
+      "size_bytes": 123090
+    },
+    {
+      "extension": ".js",
+      "file_count": 9,
+      "size_bytes": 45904
+    },
+    {
+      "extension": ".json",
+      "file_count": 7819,
+      "size_bytes": 6687818
+    },
+    {
+      "extension": ".jsonl",
+      "file_count": 29,
+      "size_bytes": 137423403
+    },
+    {
+      "extension": ".log",
+      "file_count": 28,
+      "size_bytes": 1320908
+    },
+    {
+      "extension": ".md",
+      "file_count": 825,
+      "size_bytes": 9041577
+    },
+    {
+      "extension": ".mdx",
+      "file_count": 38,
+      "size_bytes": 509888
+    },
+    {
+      "extension": ".npy",
+      "file_count": 1,
+      "size_bytes": 9741440
+    },
+    {
+      "extension": ".parquet",
+      "file_count": 39,
+      "size_bytes": 2907417
+    },
+    {
+      "extension": ".patch",
+      "file_count": 49,
+      "size_bytes": 203874165
+    },
+    {
+      "extension": ".pdf",
+      "file_count": 285,
+      "size_bytes": 1704456444
+    },
+    {
+      "extension": ".png",
+      "file_count": 146,
+      "size_bytes": 27926504
+    },
+    {
+      "extension": ".pptx",
+      "file_count": 2,
+      "size_bytes": 26068622
+    },
+    {
+      "extension": ".ps1",
+      "file_count": 1,
+      "size_bytes": 2212
+    },
+    {
+      "extension": ".py",
+      "file_count": 974,
+      "size_bytes": 12077452
+    },
+    {
+      "extension": ".redacted",
+      "file_count": 12,
+      "size_bytes": 7052
+    },
+    {
+      "extension": ".service",
+      "file_count": 6,
+      "size_bytes": 2626
+    },
+    {
+      "extension": ".sh",
+      "file_count": 19,
+      "size_bytes": 75057
+    },
+    {
+      "extension": ".sha256",
+      "file_count": 36,
+      "size_bytes": 3310778
+    },
+    {
+      "extension": ".sql",
+      "file_count": 3,
+      "size_bytes": 7733
+    },
+    {
+      "extension": ".sqlite",
+      "file_count": 19,
+      "size_bytes": 463699968
+    },
+    {
+      "extension": ".sqlite-shm",
+      "file_count": 7,
+      "size_bytes": 229376
+    },
+    {
+      "extension": ".sqlite-wal",
+      "file_count": 7,
+      "size_bytes": 0
+    },
+    {
+      "extension": ".test_backup",
+      "file_count": 1,
+      "size_bytes": 6829
+    },
+    {
+      "extension": ".tex",
+      "file_count": 1,
+      "size_bytes": 18255
+    },
+    {
+      "extension": ".toml",
+      "file_count": 4,
+      "size_bytes": 2003
+    },
+    {
+      "extension": ".tsv",
+      "file_count": 30,
+      "size_bytes": 5062046
+    },
+    {
+      "extension": ".txt",
+      "file_count": 209,
+      "size_bytes": 1708003
+    },
+    {
+      "extension": ".url",
+      "file_count": 4,
+      "size_bytes": 322
+    },
+    {
+      "extension": ".xdf",
+      "file_count": 8,
+      "size_bytes": 2590582
+    },
+    {
+      "extension": ".xlsx",
+      "file_count": 1,
+      "size_bytes": 13194
+    },
+    {
+      "extension": ".yaml",
+      "file_count": 35,
+      "size_bytes": 171214
+    },
+    {
+      "extension": ".yml",
+      "file_count": 10,
+      "size_bytes": 21454
+    },
+    {
+      "extension": "[none]",
+      "file_count": 7,
+      "size_bytes": 32272
+    }
+  ],
+  "notable_assets": [
+    {
+      "path": "/home/altair/data/clawalpha/canonical",
+      "kind": "canonical_market_series",
+      "decision": "MIGRATE_AS_IS after hash/schema validation; preserve as legacy dataset version."
+    },
+    {
+      "path": "/home/altair/data/clawalpha/instruments.json",
+      "kind": "instrument_metadata",
+      "decision": "MIGRATE_WITH_REWRITE into stable instruments plus historical identifiers."
+    },
+    {
+      "path": "/home/altair/state/clawalpha/evidence_engine.db",
+      "kind": "research_evidence_database",
+      "decision": "MIGRATE_WITH_REWRITE through validated intermediate records."
+    },
+    {
+      "path": "/home/altair/migration/backups/git/Clausula-a2c4a581/Clausula-a2c4a581.bundle",
+      "kind": "legacy_clausula_repository_and_private_snapshots",
+      "decision": "REFERENCE_ONLY for code; selected private data requires explicit local ETL review."
+    }
+  ]
+}

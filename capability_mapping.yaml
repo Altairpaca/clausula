@@ -1,0 +1,77 @@
+version: 3
+status: architecture_mapping
+mappings:
+  - legacy: data.pipeline.adapters.SourceAdapter
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: market.import_daily_prices
+    note: Provider-specific adapters implement a canonical port; they never enter domain.
+  - legacy: data.pipeline.instruments
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: instrument.resolve
+  - legacy: data.pipeline.manifest.DatasetManifest
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: market.get_dataset_version
+  - legacy: data.pipeline.quality.DataQualityGate
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: market.validate_import
+  - legacy: behavior.portfolio.state.PortfolioState
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: ledger.get_state
+    note: Fill-oriented mutable positions are replaced by transaction replay.
+  - legacy: behavior.portfolio.reconciliation.reconcile
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: ledger.reconcile
+  - legacy: behavior.decisions.DecisionPackage
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: decision.create
+    note: Split old package into Recommendation, Decision, Evidence links, and transaction links.
+  - legacy: evidence_engine.evidence_cards
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: research.get_document
+  - legacy: evidence_engine.thesis_registry
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: research.get_thesis
+  - legacy: quant.evaluation
+    disposition: REFERENCE_ONLY
+    canonical: analysis.run
+    note: Selected pure functions require independent definitions and golden tests.
+  - legacy: code.mcp_server
+    disposition: ARCHIVE
+    canonical: null
+    note: MCP will later be generated from the Capability Registry.
+  - legacy: behavior.agent
+    disposition: ARCHIVE
+    canonical: null
+    note: Agent prompts and runtime glue do not define domain capabilities.
+  - legacy: legacy Clausula portfolio YAML/JSON
+    disposition: MIGRATE_WITH_REWRITE
+    canonical: ledger.import
+    note: Private records are imported locally through validated intermediate records.
+
+canonical_m0_m2:
+  - account.create
+  - instrument.resolve
+  - ledger.import
+  - ledger.get_transactions
+  - ledger.get_state
+  - ledger.record_transfer
+  - ledger.record_correction
+  - ledger.reconcile
+  - portfolio.get_positions
+  - system.check_integrity
+  - system.backup
+  - system.restore
+
+implementation_status:
+  account.create: implemented
+  instrument.resolve: implemented_basic_identifier_registry
+  ledger.import: implemented_csv_atomic_transactions
+  ledger.get_transactions: implemented
+  ledger.get_state: implemented_cash_and_quantity_replay
+  ledger.record_transfer: implemented_cash_two_sided
+  ledger.record_correction: implemented_append_only
+  ledger.reconcile: implemented_append_only_record
+  portfolio.get_positions: provisional_account_projection
+  system.check_integrity: implemented
+  system.backup: implemented_database_only
+  system.restore: implemented_database_only

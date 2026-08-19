@@ -1,0 +1,119 @@
+{
+  "version": 2,
+  "generated_at": "2026-08-19T05:27:45+00:00",
+  "mode": "metadata_hashes_only",
+  "roots": [
+    {
+      "name": "clawalpha_repository",
+      "path": "/home/altair/projects/clawalpha",
+      "exists": true,
+      "file_count": 1782,
+      "size_bytes": 745944835,
+      "tree_sha256": "848edb81882eccc9f6be45d6b6735e928247f98cf3f5a754aa9d3a25075b62ac",
+      "git_head": "04868b303db485c605eaee18f1eded36aee8d86b",
+      "git_branch": "main",
+      "git_dirty_entries": 561
+    },
+    {
+      "name": "clawalpha_data",
+      "path": "/home/altair/data/clawalpha",
+      "exists": true,
+      "file_count": 493,
+      "size_bytes": 1975392584,
+      "tree_sha256": "2562b47e6a8a3578462e80bb2c493539ebfcbe846fa90c459235d40e79c0c99e"
+    },
+    {
+      "name": "clawalpha_state",
+      "path": "/home/altair/state/clawalpha",
+      "exists": true,
+      "file_count": 9,
+      "size_bytes": 4266276,
+      "tree_sha256": "ef12187f4dca420dbfba9993e1151647868448826f396bc53341939c3542f89f"
+    },
+    {
+      "name": "clawalpha_artifacts",
+      "path": "/home/altair/artifacts/clawalpha",
+      "exists": true,
+      "file_count": 133,
+      "size_bytes": 60970046,
+      "tree_sha256": "ebce32383dd3506941de9ab80107ab1c9181ddae4349a7de245f0aa6ad3e3b0f"
+    },
+    {
+      "name": "clawalpha_archive",
+      "path": "/home/altair/archive/clawalpha",
+      "exists": true,
+      "file_count": 8042,
+      "size_bytes": 571918347,
+      "tree_sha256": "4f90fbb076a2c3f8eaeb0afe5ae9894b6bb18ce11ae67744f7a287dac9ba1c7c"
+    },
+    {
+      "name": "migration",
+      "path": "/home/altair/migration",
+      "exists": true,
+      "file_count": 415,
+      "size_bytes": 3023673824,
+      "tree_sha256": "045fa7e3bed131cf39fd4769bbd90b88c95030bfd5b8d7c1f69e4e938a121d91"
+    }
+  ],
+  "bundles": [
+    {
+      "name": "legacy_clausula",
+      "path": "/home/altair/migration/backups/git/Clausula-a2c4a581/Clausula-a2c4a581.bundle",
+      "exists": true,
+      "size_bytes": 181764415,
+      "sha256": "63076adbe19a5dcf4c84dd898a2cfd222ff5120192998e1cf69d71419bbe41d0",
+      "heads": [
+        {
+          "commit": "a62ec84f921b7aef488c68a9294ce3a49a7d686b",
+          "reference": "refs/heads/master"
+        },
+        {
+          "commit": "a62ec84f921b7aef488c68a9294ce3a49a7d686b",
+          "reference": "HEAD"
+        }
+      ]
+    },
+    {
+      "name": "clawalpha_history",
+      "path": "/home/altair/migration/backups/git/projects_clawalpha-30c606d9/projects_clawalpha-30c606d9.bundle",
+      "exists": true,
+      "size_bytes": 1146263058,
+      "sha256": "c89c9e11052ed3d2c543e845e6b081b4b8d1ae2f9cbfe26ca7f24794e905d461",
+      "heads": [
+        {
+          "commit": "006ab76177140132051e24424a05bfef69bf3637",
+          "reference": "refs/heads/cleanup/profile-health-audit"
+        },
+        {
+          "commit": "deed51e0d7a14de2009b4c6505acf23a8bebd709",
+          "reference": "refs/heads/hermes/plan-a-abtest"
+        },
+        {
+          "commit": "30cdcea07c476f71dc0224d3a03fd49ef67cad64",
+          "reference": "refs/heads/main"
+        },
+        {
+          "commit": "df38d7b5afabf94eb2c4fb4ac577bddf6ddd2ac7",
+          "reference": "refs/remotes/origin/main"
+        },
+        {
+          "commit": "0cf76995003019f3d1a7c898ab20ee049711c53d",
+          "reference": "refs/stash"
+        },
+        {
+          "commit": "30cdcea07c476f71dc0224d3a03fd49ef67cad64",
+          "reference": "HEAD"
+        },
+        {
+          "commit": "deed51e0d7a14de2009b4c6505acf23a8bebd709",
+          "reference": "worktrees/plan-a-abtest/HEAD"
+        }
+      ]
+    }
+  ],
+  "guarantees": [
+    "No legacy file was modified.",
+    "No legacy file content is copied into this repository.",
+    "Tree hashes cover path and file content hashes while excluding tool caches and Git object storage."
+  ]
+}
