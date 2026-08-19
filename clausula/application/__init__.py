@@ -6,6 +6,7 @@ from .rebuild import LedgerRebuilder, RebuildError
 from .market import MarketImportError, MarketService
 from .portfolio import PortfolioService
 from .policy import PolicyService
+from .planning import PlanningError, PlanningService
 
 __all__ = [
     "CoreRepository",
@@ -17,5 +18,7 @@ __all__ = [
     "MarketService",
     "PortfolioService",
     "PolicyService",
+    "PlanningError",
+    "PlanningService",
     "RebuildError",
 ]

@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 from contextlib import contextmanager
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 
 from .audit import append_audit_event, verify_audit_chain
 from .backup import (
@@ -27,10 +27,15 @@ from clausula.domain import (
     InstrumentIdentifier,
     InvestmentPolicy,
     MarketPrice,
+    Plan,
+    PlanScenario,
+    ProjectedState,
+    CandidateAction,
     Portfolio,
     PortfolioMembershipEvent,
     PolicyRule,
     PolicyVersion,
+    UnresolvedConstraint,
     SecurityTransfer,
     Transaction,
     canonical_decimal,
@@ -472,10 +477,44 @@ class Store:
                 ]
                 versions.append({"version": dict(version), "rules": rules})
             policies.append({"policy": dict(policy), "versions": versions})
+        plans = []
+        for plan in self.db.execute("SELECT * FROM plans ORDER BY created_at,id"):
+            scenarios = []
+            for scenario in self.db.execute(
+                "SELECT * FROM plan_scenarios WHERE plan_id=? ORDER BY scenario_key,id",
+                (plan["id"],),
+            ):
+                scenarios.append(
+                    {
+                        "scenario": dict(scenario),
+                        "actions": [
+                            dict(action)
+                            for action in self.db.execute(
+                                "SELECT * FROM plan_actions WHERE scenario_id=? ORDER BY sequence,id",
+                                (scenario["id"],),
+                            )
+                        ],
+                        "projected_state": dict(
+                            self.db.execute(
+                                "SELECT * FROM plan_projected_states WHERE scenario_id=?",
+                                (scenario["id"],),
+                            ).fetchone()
+                        ),
+                        "constraints": [
+                            dict(constraint)
+                            for constraint in self.db.execute(
+                                "SELECT * FROM plan_constraints WHERE scenario_id=? ORDER BY id",
+                                (scenario["id"],),
+                            )
+                        ],
+                    }
+                )
+            plans.append({"plan": dict(plan), "scenarios": scenarios})
         return {
             "accounts": accounts,
             "portfolios": portfolios,
             "policies": policies,
+            "plans": plans,
             "imports": imports,
         }
 
@@ -1081,6 +1120,15 @@ class Store:
             (policy_id,),
         ).fetchall()
 
+    def policy_version(self, policy_version_id: str) -> sqlite3.Row:
+        require_uuid(policy_version_id, "policy_version_id")
+        row = self.db.execute(
+            "SELECT * FROM policy_versions WHERE id=?", (policy_version_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown policy version: {policy_version_id}")
+        return row
+
     def policy_rules(self, policy_version_id: str) -> list[sqlite3.Row]:
         require_uuid(policy_version_id, "policy_version_id")
         exists = self.db.execute(
@@ -1093,6 +1141,190 @@ class Store:
                ORDER BY rule_key,id""",
             (policy_version_id,),
         ).fetchall()
+
+    @staticmethod
+    def _plan_values(plan: Plan) -> tuple:
+        return (
+            plan.id,
+            plan.portfolio_id,
+            plan.policy_id,
+            plan.policy_version_id,
+            plan.name,
+            plan.as_of,
+            plan.known_as_of,
+            plan.created_at,
+            plan.source_artifact_id,
+            plan.import_batch_id,
+        )
+
+    @staticmethod
+    def _plan_scenario_values(scenario: PlanScenario, result_json: str) -> tuple:
+        return (
+            scenario.id,
+            scenario.plan_id,
+            scenario.scenario_key,
+            scenario.description,
+            canonical_decimal(scenario.cash_available),
+            canonical_decimal(scenario.total_fees),
+            canonical_decimal(scenario.total_tax_estimate),
+            scenario.status,
+            None
+            if scenario.projected_total is None
+            else canonical_decimal(scenario.projected_total),
+            scenario.result_sha256,
+            result_json,
+        )
+
+    @staticmethod
+    def _plan_action_values(action: CandidateAction) -> tuple:
+        return (
+            action.id,
+            action.scenario_id,
+            action.sequence,
+            action.instrument_id,
+            canonical_decimal(action.base_value_delta),
+            canonical_decimal(action.fee),
+            canonical_decimal(action.tax_estimate),
+        )
+
+    @staticmethod
+    def _projected_state_values(state: ProjectedState) -> tuple:
+        return (
+            state.id,
+            state.scenario_id,
+            int(state.complete),
+            None if state.total_value is None else canonical_decimal(state.total_value),
+            state.valuation_sha256,
+        )
+
+    @staticmethod
+    def _plan_constraint_values(constraint: UnresolvedConstraint) -> tuple:
+        return (
+            constraint.id,
+            constraint.scenario_id,
+            constraint.rule_id,
+            constraint.rule_key,
+            constraint.severity,
+            constraint.status,
+            constraint.kind,
+            None if constraint.gap is None else canonical_decimal(constraint.gap),
+            constraint.explanation,
+        )
+
+    def add_plan(
+        self,
+        plan: Plan,
+        scenarios: Iterable[PlanScenario],
+        actions: Iterable[CandidateAction],
+        constraints: Iterable[UnresolvedConstraint],
+        projected_states: Iterable[ProjectedState],
+        results: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        self.portfolio(plan.portfolio_id)
+        self.policy(plan.policy_id)
+        version = self.policy_version(plan.policy_version_id)
+        if version["policy_id"] != plan.policy_id:
+            raise ValueError("plan policy version belongs to a different policy")
+        self._require_import_artifact(plan.source_artifact_id, plan.import_batch_id)
+        scenario_rows = tuple(scenarios)
+        action_rows = tuple(actions)
+        constraint_rows = tuple(constraints)
+        projected_rows = tuple(projected_states)
+        if not scenario_rows:
+            raise ValueError("plan requires at least one scenario")
+        if any(row.plan_id != plan.id for row in scenario_rows):
+            raise ValueError("plan scenario belongs to a different plan")
+        scenario_ids = {row.id for row in scenario_rows}
+        if any(row.scenario_id not in scenario_ids for row in action_rows + constraint_rows):
+            raise ValueError("plan child belongs to an unknown scenario")
+        if {row.scenario_id for row in projected_rows} != scenario_ids:
+            raise ValueError("plan requires one projected state per scenario")
+        if set(results) != {row.id for row in scenario_rows}:
+            raise ValueError("plan results must cover every scenario")
+        with self.write_transaction():
+            self.db.execute("INSERT INTO plans VALUES(?,?,?,?,?,?,?,?,?,?)", self._plan_values(plan))
+            self.db.executemany(
+                "INSERT INTO plan_scenarios VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    self._plan_scenario_values(
+                        row,
+                        json.dumps(results[row.id], sort_keys=True, separators=(",", ":")),
+                    )
+                    for row in scenario_rows
+                ),
+            )
+            self.db.executemany(
+                "INSERT INTO plan_actions VALUES(?,?,?,?,?,?,?)",
+                (self._plan_action_values(row) for row in action_rows),
+            )
+            self.db.executemany(
+                "INSERT INTO plan_projected_states VALUES(?,?,?,?,?)",
+                (self._projected_state_values(row) for row in projected_rows),
+            )
+            self.db.executemany(
+                "INSERT INTO plan_constraints VALUES(?,?,?,?,?,?,?,?,?)",
+                (self._plan_constraint_values(row) for row in constraint_rows),
+            )
+            append_audit_event(
+                self.db,
+                operation="planning.create",
+                object_type="plan",
+                object_id=plan.id,
+                payload={
+                    "portfolio_id": plan.portfolio_id,
+                    "policy_id": plan.policy_id,
+                    "policy_version_id": plan.policy_version_id,
+                    "scenario_count": len(scenario_rows),
+                    "source_artifact_id": plan.source_artifact_id,
+                    "import_batch_id": plan.import_batch_id,
+                },
+            )
+
+    def plan(self, plan_id: str) -> sqlite3.Row:
+        require_uuid(plan_id, "plan_id")
+        row = self.db.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown plan: {plan_id}")
+        return row
+
+    def plans(self, portfolio_id: str | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM plans"
+        arguments: tuple[str, ...] = ()
+        if portfolio_id is not None:
+            require_uuid(portfolio_id, "portfolio_id")
+            query += " WHERE portfolio_id=?"
+            arguments = (portfolio_id,)
+        return self.db.execute(query + " ORDER BY created_at,id", arguments).fetchall()
+
+    def plan_scenarios(self, plan_id: str) -> list[sqlite3.Row]:
+        self.plan(plan_id)
+        return self.db.execute(
+            "SELECT * FROM plan_scenarios WHERE plan_id=? ORDER BY scenario_key,id",
+            (plan_id,),
+        ).fetchall()
+
+    def plan_actions(self, scenario_id: str) -> list[sqlite3.Row]:
+        require_uuid(scenario_id, "scenario_id")
+        return self.db.execute(
+            "SELECT * FROM plan_actions WHERE scenario_id=? ORDER BY sequence,id",
+            (scenario_id,),
+        ).fetchall()
+
+    def plan_constraints(self, scenario_id: str) -> list[sqlite3.Row]:
+        require_uuid(scenario_id, "scenario_id")
+        return self.db.execute(
+            "SELECT * FROM plan_constraints WHERE scenario_id=? ORDER BY id",
+            (scenario_id,),
+        ).fetchall()
+
+    def plan_projected_state(self, scenario_id: str) -> sqlite3.Row:
+        require_uuid(scenario_id, "scenario_id")
+        row = self.db.execute(
+            "SELECT * FROM plan_projected_states WHERE scenario_id=?", (scenario_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown projected state for scenario: {scenario_id}")
+        return row
 
     def import_batch(
         self,

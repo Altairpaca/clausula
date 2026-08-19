@@ -8,6 +8,7 @@ from clausula.domain import TransactionLeg, canonical_decimal, dec
 
 from .ledger import MANUAL_EVENT_FORMAT, LedgerService
 from .market import MarketService
+from .planning import PLANNING_EVENT_FORMAT, PlanningService
 from .policy import POLICY_EVENT_FORMAT, PolicyService
 from .portfolio import PORTFOLIO_EVENT_FORMAT, PortfolioService
 from .ports import CoreRepository
@@ -31,6 +32,7 @@ class LedgerRebuilder:
             target_catalog["accounts"]
             or target_catalog["portfolios"]
             or target_catalog.get("policies")
+            or target_catalog.get("plans")
             or target_catalog["imports"]
         ):
             raise RebuildError("target repository must be empty")
@@ -38,6 +40,7 @@ class LedgerRebuilder:
         target_market = MarketService(self.target)
         target_portfolios = PortfolioService(self.target)
         target_policies = PolicyService(self.target)
+        target_planning = PlanningService(self.target)
         account_mapping: dict[str, str] = {}
         transaction_mapping: dict[str, str] = {}
         instrument_mapping: dict[str, str] = {}
@@ -45,6 +48,8 @@ class LedgerRebuilder:
         policy_mapping: dict[str, str] = {}
         policy_version_mapping: dict[str, str] = {}
         policy_rule_mapping: dict[str, str] = {}
+        plan_mapping: dict[str, str] = {}
+        plan_scenario_mapping: dict[str, str] = {}
         for account in catalog["accounts"]:
             account_mapping[account["id"]] = target_service.create_account(
                 account["institution"], account["name"]
@@ -139,6 +144,7 @@ class LedgerRebuilder:
                     MANUAL_EVENT_FORMAT,
                     PORTFOLIO_EVENT_FORMAT,
                     POLICY_EVENT_FORMAT,
+                    PLANNING_EVENT_FORMAT,
                 }:
                     raise ValueError("unknown manual event format")
                 if event["format"] == POLICY_EVENT_FORMAT:
@@ -149,6 +155,16 @@ class LedgerRebuilder:
                         policy_mapping,
                         policy_version_mapping,
                         policy_rule_mapping,
+                    )
+                elif event["format"] == PLANNING_EVENT_FORMAT:
+                    result = self._replay_planning_event(
+                        target_service,
+                        target_planning,
+                        event,
+                        policy_mapping,
+                        policy_version_mapping,
+                        instrument_mapping,
+                        plan_mapping,
                     )
                 else:
                     result = self._replay_manual_event(
@@ -305,6 +321,59 @@ class LedgerRebuilder:
                     "target": target_entry,
                 }
             )
+        plan_comparisons = []
+        for source_entry in catalog.get("plans", []):
+            source_plan = source_entry["plan"]
+            source_plan_id = source_plan["id"]
+            target_plan_id = plan_mapping.get(source_plan_id)
+            matches = target_plan_id is not None
+            target_entry = None
+            if target_plan_id is not None:
+                target_entry = target_planning.get(target_plan_id)
+                target_plan = target_entry["plan"]
+                matches = matches and (
+                    target_plan["name"] == source_plan["name"]
+                    and target_plan["portfolio_id"]
+                    == portfolio_mapping[source_plan["portfolio_id"]]
+                    and target_plan["policy_id"] == policy_mapping[source_plan["policy_id"]]
+                    and target_plan["policy_version_id"]
+                    == policy_version_mapping[source_plan["policy_version_id"]]
+                    and target_plan["as_of"] == source_plan["as_of"]
+                    and target_plan["known_as_of"] == source_plan["known_as_of"]
+                    and target_plan["created_at"] == source_plan["created_at"]
+                )
+                target_by_key = {
+                    item["scenario_key"]: item for item in target_entry["scenarios"]
+                }
+                if set(target_by_key) != {
+                    item["scenario"]["scenario_key"] for item in source_entry["scenarios"]
+                }:
+                    matches = False
+                else:
+                    for source_scenario in source_entry["scenarios"]:
+                        source_row = source_scenario["scenario"]
+                        target_row = target_by_key[source_row["scenario_key"]]
+                        plan_scenario_mapping[source_row["id"]] = target_row["id"]
+                        source_result = json.loads(source_row["result_json"])
+                        matches = matches and (
+                            source_row["description"] == target_row["description"]
+                            and source_row["cash_available"] == target_row["cash_available"]
+                            and source_row["total_fees"] == target_row["total_fees"]
+                            and source_row["status"] == target_row["status"]
+                            and source_row["projected_total"] == target_row["projected_total"]
+                            and self._planning_semantic(source_result)
+                            == self._planning_semantic(target_row["result"])
+                        )
+            consistent = consistent and matches
+            plan_comparisons.append(
+                {
+                    "source_plan_id": source_plan_id,
+                    "target_plan_id": target_plan_id,
+                    "matches": matches,
+                    "source": source_entry,
+                    "target": target_entry,
+                }
+            )
         return {
             "consistent": consistent and not warnings,
             "account_mapping": account_mapping,
@@ -314,12 +383,27 @@ class LedgerRebuilder:
             "policy_mapping": policy_mapping,
             "policy_version_mapping": policy_version_mapping,
             "policy_rule_mapping": policy_rule_mapping,
+            "plan_mapping": plan_mapping,
+            "plan_scenario_mapping": plan_scenario_mapping,
             "replayed_imports": replayed,
             "comparisons": comparisons,
             "portfolio_comparisons": portfolio_comparisons,
             "policy_comparisons": policy_comparisons,
+            "plan_comparisons": plan_comparisons,
             "warnings": warnings,
         }
+
+    @staticmethod
+    def _planning_semantic(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: LedgerRebuilder._planning_semantic(item)
+                for key, item in value.items()
+                if key not in {"id", "result_sha256"} and not key.endswith("_id")
+            }
+        if isinstance(value, list):
+            return [LedgerRebuilder._planning_semantic(item) for item in value]
+        return value
 
     @staticmethod
     def _policy_rule_semantics(rule: dict[str, Any]) -> tuple:
@@ -406,6 +490,54 @@ class LedgerRebuilder:
                     ]
             return target
         raise ValueError(f"unsupported policy operation: {operation}")
+
+    def _replay_planning_event(
+        self,
+        service: LedgerService,
+        planning: PlanningService,
+        event: dict[str, Any],
+        policy_mapping: dict[str, str],
+        policy_version_mapping: dict[str, str],
+        instrument_mapping: dict[str, str],
+        plan_mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        if event.get("schema_version") != "1" or event.get("operation") != "planning.create":
+            raise ValueError("unsupported planning event")
+        scenarios = []
+        for scenario in event["scenarios"]:
+            actions = []
+            for action in scenario["actions"]:
+                actions.append(
+                    {
+                        **action,
+                        "instrument_id": self._map_instrument(
+                            service, action["instrument_id"], instrument_mapping
+                        ),
+                    }
+                )
+            scenarios.append({**scenario, "actions": actions})
+        target = planning.create(
+            policy_mapping[event["policy_id"]],
+            event["name"],
+            event["as_of"],
+            scenarios,
+            known_as_of=event["known_as_of"],
+            created_at=event["created_at"],
+            recorded_at=event["recorded_at"],
+            price_dataset_name=event.get("price_dataset_name"),
+            price_dataset_version=event.get("price_dataset_version"),
+            fx_dataset_name=event.get("fx_dataset_name"),
+            fx_dataset_version=event.get("fx_dataset_version"),
+        )
+        if target["comparison_sha256"] != event["comparison_sha256"]:
+            raise RebuildError("planning scenario semantics changed during rebuild")
+        if (
+            target["plan"]["policy_version_id"]
+            != policy_version_mapping[event["policy_version_id"]]
+        ):
+            raise RebuildError("planning selected a different policy version during rebuild")
+        plan_mapping[event["plan_id"]] = target["plan"]["id"]
+        return target
 
     def _map_instrument(
         self,

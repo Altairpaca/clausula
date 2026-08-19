@@ -135,6 +135,37 @@ class ClausulaClient:
             },
             permissions={"policy:read", "portfolio:read", "market:read"},
         )
+    def compare_plan_scenarios(self, policy_id, as_of, scenarios, **options):
+        return self.invoke(
+            "planning.compare",
+            {
+                "policy_id": policy_id,
+                "as_of": as_of,
+                "scenarios": list(scenarios),
+                **options,
+            },
+            permissions={"planning:read", "policy:read", "portfolio:read", "market:read"},
+        )
+    def create_plan(self, policy_id, name, as_of, scenarios, **options):
+        return self.invoke(
+            "planning.create",
+            {
+                "policy_id": policy_id,
+                "name": name,
+                "as_of": as_of,
+                "scenarios": list(scenarios),
+                **options,
+            },
+            permissions={"planning:write", "policy:read", "portfolio:read", "market:read"},
+            confirmed=True,
+        )
+    def list_plans(self, portfolio_id=None):
+        arguments = {} if portfolio_id is None else {"portfolio_id": portfolio_id}
+        return self.invoke("planning.list", arguments, permissions={"planning:read"})
+    def get_plan(self, plan_id):
+        return self.invoke(
+            "planning.get", {"plan_id": plan_id}, permissions={"planning:read"}
+        )
     def invoke(self, name, arguments=None, *, permissions=(), confirmed=False, dry_run=False):
         return self.capabilities.execute(
             name,

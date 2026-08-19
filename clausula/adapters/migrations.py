@@ -299,6 +299,87 @@ CREATE TRIGGER policy_rules_reject_delete BEFORE DELETE ON policy_rules
 BEGIN SELECT RAISE(ABORT, 'policy_rules is append-only'); END;
 """,
     ),
+    Migration(
+        7,
+        "deterministic_planning_artifacts",
+        """
+CREATE TABLE plans(
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL REFERENCES portfolios(id),
+    policy_id TEXT NOT NULL REFERENCES investment_policies(id),
+    policy_version_id TEXT NOT NULL REFERENCES policy_versions(id),
+    name TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    known_as_of TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE plan_scenarios(
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES plans(id),
+    scenario_key TEXT NOT NULL,
+    description TEXT NOT NULL,
+    cash_available TEXT NOT NULL,
+    total_fees TEXT NOT NULL,
+    total_tax_estimate TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('feasible','violates_policy','unavailable','rejected')),
+    projected_total TEXT,
+    result_sha256 TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    UNIQUE(plan_id, scenario_key)
+);
+CREATE TABLE plan_actions(
+    id TEXT PRIMARY KEY,
+    scenario_id TEXT NOT NULL REFERENCES plan_scenarios(id),
+    sequence INTEGER NOT NULL CHECK(sequence >= 0),
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    base_value_delta TEXT NOT NULL,
+    fee TEXT NOT NULL,
+    tax_estimate TEXT NOT NULL,
+    UNIQUE(scenario_id, sequence)
+);
+CREATE TABLE plan_projected_states(
+    id TEXT PRIMARY KEY,
+    scenario_id TEXT NOT NULL UNIQUE REFERENCES plan_scenarios(id),
+    complete INTEGER NOT NULL CHECK(complete IN (0,1)),
+    total_value TEXT,
+    valuation_sha256 TEXT NOT NULL
+);
+CREATE TABLE plan_constraints(
+    id TEXT PRIMARY KEY,
+    scenario_id TEXT NOT NULL REFERENCES plan_scenarios(id),
+    rule_id TEXT REFERENCES policy_rules(id),
+    rule_key TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK(severity IN ('hard','soft')),
+    status TEXT NOT NULL CHECK(status IN ('violation','unavailable')),
+    kind TEXT NOT NULL,
+    gap TEXT,
+    explanation TEXT NOT NULL
+);
+CREATE INDEX plans_temporal ON plans(portfolio_id, as_of, known_as_of, created_at);
+CREATE TRIGGER plans_reject_update BEFORE UPDATE ON plans
+BEGIN SELECT RAISE(ABORT, 'plans is append-only'); END;
+CREATE TRIGGER plans_reject_delete BEFORE DELETE ON plans
+BEGIN SELECT RAISE(ABORT, 'plans is append-only'); END;
+CREATE TRIGGER plan_scenarios_reject_update BEFORE UPDATE ON plan_scenarios
+BEGIN SELECT RAISE(ABORT, 'plan_scenarios is append-only'); END;
+CREATE TRIGGER plan_scenarios_reject_delete BEFORE DELETE ON plan_scenarios
+BEGIN SELECT RAISE(ABORT, 'plan_scenarios is append-only'); END;
+CREATE TRIGGER plan_actions_reject_update BEFORE UPDATE ON plan_actions
+BEGIN SELECT RAISE(ABORT, 'plan_actions is append-only'); END;
+CREATE TRIGGER plan_actions_reject_delete BEFORE DELETE ON plan_actions
+BEGIN SELECT RAISE(ABORT, 'plan_actions is append-only'); END;
+CREATE TRIGGER plan_projected_states_reject_update BEFORE UPDATE ON plan_projected_states
+BEGIN SELECT RAISE(ABORT, 'plan_projected_states is append-only'); END;
+CREATE TRIGGER plan_projected_states_reject_delete BEFORE DELETE ON plan_projected_states
+BEGIN SELECT RAISE(ABORT, 'plan_projected_states is append-only'); END;
+CREATE TRIGGER plan_constraints_reject_update BEFORE UPDATE ON plan_constraints
+BEGIN SELECT RAISE(ABORT, 'plan_constraints is append-only'); END;
+CREATE TRIGGER plan_constraints_reject_delete BEFORE DELETE ON plan_constraints
+BEGIN SELECT RAISE(ABORT, 'plan_constraints is append-only'); END;
+""",
+    ),
 )
 
 

@@ -117,6 +117,34 @@ def main(argv=None):
     policy_simulate.add_argument("--fx-dataset")
     policy_simulate.add_argument("--fx-version")
 
+    planning = subparsers.add_parser("planning")
+    planning_actions = planning.add_subparsers(dest="action", required=True)
+    planning_compare = planning_actions.add_parser("compare")
+    planning_compare.add_argument("policy")
+    planning_compare.add_argument("as_of")
+    planning_compare.add_argument("--scenarios", required=True, help="JSON text or a JSON file path")
+    planning_compare.add_argument("--known-as-of")
+    planning_compare.add_argument("--price-dataset")
+    planning_compare.add_argument("--price-version")
+    planning_compare.add_argument("--fx-dataset")
+    planning_compare.add_argument("--fx-version")
+    planning_create = planning_actions.add_parser("create")
+    planning_create.add_argument("policy")
+    planning_create.add_argument("name")
+    planning_create.add_argument("as_of")
+    planning_create.add_argument("--scenarios", required=True, help="JSON text or a JSON file path")
+    planning_create.add_argument("--known-as-of")
+    planning_create.add_argument("--created-at")
+    planning_create.add_argument("--recorded-at")
+    planning_create.add_argument("--price-dataset")
+    planning_create.add_argument("--price-version")
+    planning_create.add_argument("--fx-dataset")
+    planning_create.add_argument("--fx-version")
+    planning_list = planning_actions.add_parser("list")
+    planning_list.add_argument("--portfolio")
+    planning_get = planning_actions.add_parser("get")
+    planning_get.add_argument("plan")
+
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
     system_actions.add_parser("check")
@@ -286,6 +314,44 @@ def main(argv=None):
             "policy.evaluate" if args.action == "evaluate" else "policy.simulate",
             arguments,
             permissions={"policy:read", "portfolio:read", "market:read"},
+        )
+    elif args.command == "planning" and args.action in {"compare", "create"}:
+        arguments = {
+            "policy_id": args.policy,
+            "as_of": args.as_of,
+            "scenarios": _json_argument(args.scenarios),
+        }
+        if args.action == "create":
+            arguments["name"] = args.name
+            if args.created_at is not None:
+                arguments["created_at"] = args.created_at
+            if args.recorded_at is not None:
+                arguments["recorded_at"] = args.recorded_at
+        optional = {
+            "known_as_of": args.known_as_of,
+            "price_dataset_name": args.price_dataset,
+            "price_dataset_version": args.price_version,
+            "fx_dataset_name": args.fx_dataset,
+            "fx_dataset_version": args.fx_version,
+        }
+        arguments.update({key: value for key, value in optional.items() if value is not None})
+        output = registry.execute(
+            "planning.compare" if args.action == "compare" else "planning.create",
+            arguments,
+            permissions={
+                "planning:read" if args.action == "compare" else "planning:write",
+                "policy:read",
+                "portfolio:read",
+                "market:read",
+            },
+            confirmed=args.action == "create",
+        )
+    elif args.command == "planning" and args.action == "list":
+        arguments = {} if args.portfolio is None else {"portfolio_id": args.portfolio}
+        output = registry.execute("planning.list", arguments, permissions={"planning:read"})
+    elif args.command == "planning" and args.action == "get":
+        output = registry.execute(
+            "planning.get", {"plan_id": args.plan}, permissions={"planning:read"}
         )
     elif args.command == "system" and args.action == "check":
         output = registry.execute(
