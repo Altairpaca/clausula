@@ -1,5 +1,5 @@
-version: 5
-status: m3_market_portfolio_implemented
+version: 6
+status: m4_policy_as_code_implemented
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
     disposition: MIGRATE_WITH_REWRITE
@@ -75,6 +75,13 @@ canonical_m3:
   - portfolio.get_valuation
   - portfolio.get_performance
 
+canonical_m4:
+  - policy.create
+  - policy.add_version
+  - policy.list
+  - policy.evaluate
+  - policy.simulate
+
 implementation_status:
   account.create: implemented
   instrument.resolve: implemented_basic_identifier_registry
@@ -99,6 +106,11 @@ implementation_status:
   portfolio.set_membership: implemented_temporal_append_only
   portfolio.get_valuation: implemented_decimal_gap_aware
   portfolio.get_performance: implemented_twr_xirr_drawdown
+  policy.create: implemented_versioned_atomic_provenance
+  policy.add_version: implemented_append_only_temporal
+  policy.list: implemented
+  policy.evaluate: implemented_decimal_fail_closed
+  policy.simulate: implemented_base_cash_non_mutating
 
 platform_contract:
   registry: implemented

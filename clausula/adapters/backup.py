@@ -43,6 +43,9 @@ EXPORT_TABLES = (
     "market_fx_rates",
     "portfolios",
     "portfolio_membership_events",
+    "investment_policies",
+    "policy_versions",
+    "policy_rules",
 )
 
 

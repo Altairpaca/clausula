@@ -1,8 +1,16 @@
 import argparse
 import json
+from pathlib import Path
 
 from .capabilities import build_core_registry
 from .store import Store
+
+
+def _json_argument(value: str):
+    candidate = Path(value)
+    if candidate.is_file():
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    return json.loads(value)
 
 
 def main(argv=None):
@@ -72,6 +80,42 @@ def main(argv=None):
     performance.add_argument("--price-version")
     performance.add_argument("--fx-dataset")
     performance.add_argument("--fx-version")
+
+    policy = subparsers.add_parser("policy")
+    policy_actions = policy.add_subparsers(dest="action", required=True)
+    policy_create = policy_actions.add_parser("create")
+    policy_create.add_argument("portfolio")
+    policy_create.add_argument("name")
+    policy_create.add_argument("effective_from")
+    policy_create.add_argument("--rules", required=True, help="JSON text or a JSON file path")
+    policy_create.add_argument("--known-at")
+    policy_create.add_argument("--created-at")
+    policy_create.add_argument("--recorded-at")
+    policy_version = policy_actions.add_parser("add-version")
+    policy_version.add_argument("policy")
+    policy_version.add_argument("effective_from")
+    policy_version.add_argument("--rules", required=True, help="JSON text or a JSON file path")
+    policy_version.add_argument("--known-at")
+    policy_version.add_argument("--recorded-at")
+    policy_list = policy_actions.add_parser("list")
+    policy_list.add_argument("--portfolio")
+    policy_evaluate = policy_actions.add_parser("evaluate")
+    policy_evaluate.add_argument("policy")
+    policy_evaluate.add_argument("as_of")
+    policy_evaluate.add_argument("--known-as-of")
+    policy_evaluate.add_argument("--price-dataset")
+    policy_evaluate.add_argument("--price-version")
+    policy_evaluate.add_argument("--fx-dataset")
+    policy_evaluate.add_argument("--fx-version")
+    policy_simulate = policy_actions.add_parser("simulate")
+    policy_simulate.add_argument("policy")
+    policy_simulate.add_argument("as_of")
+    policy_simulate.add_argument("--actions", required=True, help="JSON text or a JSON file path")
+    policy_simulate.add_argument("--known-as-of")
+    policy_simulate.add_argument("--price-dataset")
+    policy_simulate.add_argument("--price-version")
+    policy_simulate.add_argument("--fx-dataset")
+    policy_simulate.add_argument("--fx-version")
 
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
@@ -193,6 +237,55 @@ def main(argv=None):
             else "portfolio.get_performance",
             arguments,
             permissions={"portfolio:read", "market:read"},
+        )
+    elif args.command == "policy" and args.action == "create":
+        arguments = {
+            "portfolio_id": args.portfolio,
+            "name": args.name,
+            "effective_from": args.effective_from,
+            "rules": _json_argument(args.rules),
+        }
+        for key, value in {
+            "known_at": args.known_at,
+            "created_at": args.created_at,
+            "recorded_at": args.recorded_at,
+        }.items():
+            if value is not None:
+                arguments[key] = value
+        output = registry.execute(
+            "policy.create", arguments, permissions={"policy:write"}, confirmed=True
+        )
+    elif args.command == "policy" and args.action == "add-version":
+        arguments = {
+            "policy_id": args.policy,
+            "effective_from": args.effective_from,
+            "rules": _json_argument(args.rules),
+        }
+        for key, value in {"known_at": args.known_at, "recorded_at": args.recorded_at}.items():
+            if value is not None:
+                arguments[key] = value
+        output = registry.execute(
+            "policy.add_version", arguments, permissions={"policy:write"}, confirmed=True
+        )
+    elif args.command == "policy" and args.action == "list":
+        arguments = {} if args.portfolio is None else {"portfolio_id": args.portfolio}
+        output = registry.execute("policy.list", arguments, permissions={"policy:read"})
+    elif args.command == "policy" and args.action in {"evaluate", "simulate"}:
+        arguments = {"policy_id": args.policy, "as_of": args.as_of}
+        if args.action == "simulate":
+            arguments["actions"] = _json_argument(args.actions)
+        optional = {
+            "known_as_of": args.known_as_of,
+            "price_dataset_name": args.price_dataset,
+            "price_dataset_version": args.price_version,
+            "fx_dataset_name": args.fx_dataset,
+            "fx_dataset_version": args.fx_version,
+        }
+        arguments.update({key: value for key, value in optional.items() if value is not None})
+        output = registry.execute(
+            "policy.evaluate" if args.action == "evaluate" else "policy.simulate",
+            arguments,
+            permissions={"policy:read", "portfolio:read", "market:read"},
         )
     elif args.command == "system" and args.action == "check":
         output = registry.execute(

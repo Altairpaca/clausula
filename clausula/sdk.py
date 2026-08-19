@@ -90,6 +90,51 @@ class ClausulaClient:
             {"portfolio_id": portfolio_id, "dates": list(dates), **options},
             permissions={"portfolio:read", "market:read"},
         )
+    def create_policy(self, portfolio_id, name, effective_from, rules, **options):
+        return self.invoke(
+            "policy.create",
+            {
+                "portfolio_id": portfolio_id,
+                "name": name,
+                "effective_from": effective_from,
+                "rules": list(rules),
+                **options,
+            },
+            permissions={"policy:write"},
+            confirmed=True,
+        )
+    def add_policy_version(self, policy_id, effective_from, rules, **options):
+        return self.invoke(
+            "policy.add_version",
+            {
+                "policy_id": policy_id,
+                "effective_from": effective_from,
+                "rules": list(rules),
+                **options,
+            },
+            permissions={"policy:write"},
+            confirmed=True,
+        )
+    def list_policies(self, portfolio_id=None):
+        arguments = {} if portfolio_id is None else {"portfolio_id": portfolio_id}
+        return self.invoke("policy.list", arguments, permissions={"policy:read"})
+    def evaluate_policy(self, policy_id, as_of, **options):
+        return self.invoke(
+            "policy.evaluate",
+            {"policy_id": policy_id, "as_of": as_of, **options},
+            permissions={"policy:read", "portfolio:read", "market:read"},
+        )
+    def simulate_policy(self, policy_id, as_of, actions, **options):
+        return self.invoke(
+            "policy.simulate",
+            {
+                "policy_id": policy_id,
+                "as_of": as_of,
+                "actions": list(actions),
+                **options,
+            },
+            permissions={"policy:read", "portfolio:read", "market:read"},
+        )
     def invoke(self, name, arguments=None, *, permissions=(), confirmed=False, dry_run=False):
         return self.capabilities.execute(
             name,

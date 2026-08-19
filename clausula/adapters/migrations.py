@@ -246,6 +246,59 @@ CREATE TRIGGER portfolio_membership_events_reject_delete BEFORE DELETE ON portfo
 BEGIN SELECT RAISE(ABORT, 'portfolio_membership_events is append-only'); END;
 """,
     ),
+    Migration(
+        6,
+        "versioned_investment_policy",
+        """
+CREATE TABLE investment_policies(
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL REFERENCES portfolios(id),
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE policy_versions(
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES investment_policies(id),
+    version_number INTEGER NOT NULL CHECK(version_number > 0),
+    effective_from TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    rules_sha256 TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(policy_id, version_number)
+);
+CREATE TABLE policy_rules(
+    id TEXT PRIMARY KEY,
+    policy_version_id TEXT NOT NULL REFERENCES policy_versions(id),
+    rule_key TEXT NOT NULL,
+    rule_type TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK(severity IN ('hard','soft')),
+    description TEXT NOT NULL,
+    subject TEXT,
+    target TEXT,
+    lower_bound TEXT,
+    upper_bound TEXT,
+    UNIQUE(policy_version_id, rule_key)
+);
+CREATE INDEX policy_versions_as_of
+ON policy_versions(policy_id, effective_from, known_at, version_number);
+CREATE TRIGGER investment_policies_reject_update BEFORE UPDATE ON investment_policies
+BEGIN SELECT RAISE(ABORT, 'investment_policies is append-only'); END;
+CREATE TRIGGER investment_policies_reject_delete BEFORE DELETE ON investment_policies
+BEGIN SELECT RAISE(ABORT, 'investment_policies is append-only'); END;
+CREATE TRIGGER policy_versions_reject_update BEFORE UPDATE ON policy_versions
+BEGIN SELECT RAISE(ABORT, 'policy_versions is append-only'); END;
+CREATE TRIGGER policy_versions_reject_delete BEFORE DELETE ON policy_versions
+BEGIN SELECT RAISE(ABORT, 'policy_versions is append-only'); END;
+CREATE TRIGGER policy_rules_reject_update BEFORE UPDATE ON policy_rules
+BEGIN SELECT RAISE(ABORT, 'policy_rules is append-only'); END;
+CREATE TRIGGER policy_rules_reject_delete BEFORE DELETE ON policy_rules
+BEGIN SELECT RAISE(ABORT, 'policy_rules is append-only'); END;
+""",
+    ),
 )
 
 
