@@ -25,9 +25,17 @@ from .ledger import (
     Transaction,
     TransactionLeg,
 )
+from .market import DatasetVersion, FxRate, MarketPrice, ValuationGap
+from .portfolio import Portfolio, PortfolioMembershipEvent
 
 __all__ = [
     "DomainValidationError",
+    "DatasetVersion",
+    "FxRate",
+    "MarketPrice",
+    "Portfolio",
+    "PortfolioMembershipEvent",
+    "ValuationGap",
     "ImportBatchRef",
     "CorporateAction",
     "FxConversion",

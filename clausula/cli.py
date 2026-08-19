@@ -30,6 +30,49 @@ def main(argv=None):
     cost_basis.add_argument("account")
     cost_basis.add_argument("--as-of")
 
+    market = subparsers.add_parser("market")
+    market_actions = market.add_subparsers(dest="action", required=True)
+    import_prices = market_actions.add_parser("import-prices")
+    import_prices.add_argument("path")
+    import_prices.add_argument("--dataset", default="daily_prices")
+    import_prices.add_argument("--version")
+    import_prices.add_argument("--provider", default="local")
+    import_fx = market_actions.add_parser("import-fx")
+    import_fx.add_argument("path")
+    import_fx.add_argument("--dataset", default="daily_fx")
+    import_fx.add_argument("--version")
+    import_fx.add_argument("--provider", default="local")
+    datasets = market_actions.add_parser("datasets")
+    datasets.add_argument("--name")
+
+    portfolio = subparsers.add_parser("portfolio")
+    portfolio_actions = portfolio.add_subparsers(dest="action", required=True)
+    create_portfolio = portfolio_actions.add_parser("create")
+    create_portfolio.add_argument("name")
+    create_portfolio.add_argument("--base-currency", default="USD")
+    membership = portfolio_actions.add_parser("membership")
+    membership.add_argument("portfolio")
+    membership.add_argument("account")
+    membership.add_argument("membership_action", choices=("add", "remove"))
+    membership.add_argument("effective_at")
+    membership.add_argument("--known-at")
+    valuation = portfolio_actions.add_parser("valuation")
+    valuation.add_argument("portfolio")
+    valuation.add_argument("as_of")
+    valuation.add_argument("--known-as-of")
+    valuation.add_argument("--price-dataset")
+    valuation.add_argument("--price-version")
+    valuation.add_argument("--fx-dataset")
+    valuation.add_argument("--fx-version")
+    performance = portfolio_actions.add_parser("performance")
+    performance.add_argument("portfolio")
+    performance.add_argument("dates", nargs="+")
+    performance.add_argument("--known-as-of")
+    performance.add_argument("--price-dataset")
+    performance.add_argument("--price-version")
+    performance.add_argument("--fx-dataset")
+    performance.add_argument("--fx-version")
+
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
     system_actions.add_parser("check")
@@ -86,6 +129,70 @@ def main(argv=None):
             arguments["as_of"] = args.as_of
         output = registry.execute(
             "ledger.get_cost_basis", arguments, permissions={"portfolio:read"}
+        )
+    elif args.command == "market" and args.action in {"import-prices", "import-fx"}:
+        arguments = {
+            "path": args.path,
+            "dataset_name": args.dataset,
+            "provider": args.provider,
+        }
+        if args.version is not None:
+            arguments["version"] = args.version
+        output = registry.execute(
+            "market.import_prices_csv"
+            if args.action == "import-prices"
+            else "market.import_fx_csv",
+            arguments,
+            permissions={"market:write"},
+            confirmed=True,
+        )
+    elif args.command == "market" and args.action == "datasets":
+        arguments = {} if args.name is None else {"dataset_name": args.name}
+        output = registry.execute(
+            "market.list_datasets", arguments, permissions={"market:read"}
+        )
+    elif args.command == "portfolio" and args.action == "create":
+        output = registry.execute(
+            "portfolio.create",
+            {"name": args.name, "base_currency": args.base_currency},
+            permissions={"portfolio:write"},
+            confirmed=True,
+        )
+    elif args.command == "portfolio" and args.action == "membership":
+        arguments = {
+            "portfolio_id": args.portfolio,
+            "account_id": args.account,
+            "action": args.membership_action,
+            "effective_at": args.effective_at,
+        }
+        if args.known_at is not None:
+            arguments["known_at"] = args.known_at
+        output = registry.execute(
+            "portfolio.set_membership",
+            arguments,
+            permissions={"portfolio:write"},
+            confirmed=True,
+        )
+    elif args.command == "portfolio" and args.action in {"valuation", "performance"}:
+        arguments = {"portfolio_id": args.portfolio}
+        if args.action == "valuation":
+            arguments["as_of"] = args.as_of
+        else:
+            arguments["dates"] = args.dates
+        optional = {
+            "known_as_of": args.known_as_of,
+            "price_dataset_name": args.price_dataset,
+            "price_dataset_version": args.price_version,
+            "fx_dataset_name": args.fx_dataset,
+            "fx_dataset_version": args.fx_version,
+        }
+        arguments.update({key: value for key, value in optional.items() if value is not None})
+        output = registry.execute(
+            "portfolio.get_valuation"
+            if args.action == "valuation"
+            else "portfolio.get_performance",
+            arguments,
+            permissions={"portfolio:read", "market:read"},
         )
     elif args.command == "system" and args.action == "check":
         output = registry.execute(

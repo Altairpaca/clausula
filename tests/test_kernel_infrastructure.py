@@ -52,6 +52,8 @@ def test_migrations_are_ordered_and_checksummed(tmp_path):
         (1, "kernel_baseline", 64),
         (2, "tamper_evident_audit_log", 64),
         (3, "ledger_lots_fx_corporate_actions", 64),
+        (4, "market_snapshots_and_dataset_versions", 64),
+        (5, "portfolio_membership_events", 64),
     ]
 
     store.db.execute("DROP TRIGGER schema_migrations_reject_update")

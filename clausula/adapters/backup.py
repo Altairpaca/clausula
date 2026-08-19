@@ -38,6 +38,11 @@ EXPORT_TABLES = (
     "corporate_actions",
     "audit_events",
     "schema_migrations",
+    "market_datasets",
+    "market_prices",
+    "market_fx_rates",
+    "portfolios",
+    "portfolio_membership_events",
 )
 
 

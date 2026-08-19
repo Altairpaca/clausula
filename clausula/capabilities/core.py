@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from clausula.application import CoreRepository, LedgerService
+from clausula.application import CoreRepository, LedgerService, MarketService, PortfolioService
 
 from .registry import CapabilityRegistry, CapabilitySpec, SideEffect, object_schema
 
@@ -36,6 +36,8 @@ def _state_schema() -> dict[str, Any]:
 
 def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
     service = LedgerService(repository)
+    market = MarketService(repository)
+    portfolios = PortfolioService(repository)
     registry = CapabilityRegistry()
     registry.register(
         CapabilitySpec(
@@ -179,6 +181,192 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
                 fee_currency=fee_currency,
             )
         },
+    )
+    registry.register(
+        CapabilitySpec(
+            "market.import_prices_csv",
+            "Import a versioned daily price dataset with temporal provenance and quality flags.",
+            object_schema(
+                {
+                    "path": STRING,
+                    "dataset_name": STRING,
+                    "version": NULLABLE_STRING,
+                    "provider": STRING,
+                },
+                required=("path",),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("market:write",),
+            True,
+            "Stores raw source, dataset manifest, import batch, observations, and audit event.",
+        ),
+        lambda path, dataset_name="daily_prices", version=None, provider="local": market.import_prices_csv(
+            path, dataset_name=dataset_name, version=version, provider=provider
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "market.import_fx_csv",
+            "Import a versioned daily FX dataset with temporal provenance and quality flags.",
+            object_schema(
+                {
+                    "path": STRING,
+                    "dataset_name": STRING,
+                    "version": NULLABLE_STRING,
+                    "provider": STRING,
+                },
+                required=("path",),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("market:write",),
+            True,
+            "Stores raw source, dataset manifest, import batch, observations, and audit event.",
+        ),
+        lambda path, dataset_name="daily_fx", version=None, provider="local": market.import_fx_csv(
+            path, dataset_name=dataset_name, version=version, provider=provider
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "market.list_datasets",
+            "List immutable market dataset versions and manifests.",
+            object_schema({"dataset_name": NULLABLE_STRING}),
+            {"type": "array", "items": {"type": "object"}},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("market:read",),
+            False,
+            "Returns source, import, manifest, provider, and version provenance.",
+        ),
+        lambda dataset_name=None: [
+            dict(row) for row in repository.market_datasets(dataset_name)
+        ],
+    )
+    registry.register(
+        CapabilitySpec(
+            "portfolio.create",
+            "Create a cross-account portfolio with a base currency.",
+            object_schema(
+                {"name": STRING, "base_currency": STRING}, required=("name",)
+            ),
+            object_schema({"portfolio_id": STRING}, required=("portfolio_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("portfolio:write",),
+            True,
+            "Creates an append-only portfolio and audit event.",
+        ),
+        lambda name, base_currency="USD": {
+            "portfolio_id": portfolios.create(name, base_currency)
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "portfolio.set_membership",
+            "Append an effective and knowledge-dated account membership event.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "account_id": STRING,
+                    "action": {"type": "string", "enum": ["add", "remove"]},
+                    "effective_at": STRING,
+                    "known_at": NULLABLE_STRING,
+                },
+                required=("portfolio_id", "account_id", "action", "effective_at"),
+            ),
+            object_schema({"membership_event_id": STRING}, required=("membership_event_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("portfolio:write",),
+            True,
+            "Creates an append-only membership event and audit event.",
+        ),
+        lambda portfolio_id, account_id, action, effective_at, known_at=None: {
+            "membership_event_id": portfolios.set_membership(
+                portfolio_id,
+                account_id,
+                action,
+                effective_at,
+                known_at=known_at,
+            )
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "portfolio.get_valuation",
+            "Value a cross-account portfolio with strict market and knowledge cutoffs.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "as_of": STRING,
+                    "known_as_of": NULLABLE_STRING,
+                    "price_dataset_name": NULLABLE_STRING,
+                    "price_dataset_version": NULLABLE_STRING,
+                    "fx_dataset_name": NULLABLE_STRING,
+                    "fx_dataset_version": NULLABLE_STRING,
+                },
+                required=("portfolio_id", "as_of"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("portfolio:read", "market:read"),
+            False,
+            "Returns all price/FX dataset references and structured valuation gaps.",
+        ),
+        lambda portfolio_id, as_of, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: portfolios.portfolio_valuation(
+            portfolio_id,
+            as_of,
+            known_as_of=known_as_of,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "portfolio.get_performance",
+            "Compute Decimal TWR, XIRR, drawdown, flows, and valuation series.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "dates": {"type": "array", "items": STRING},
+                    "known_as_of": NULLABLE_STRING,
+                    "price_dataset_name": NULLABLE_STRING,
+                    "price_dataset_version": NULLABLE_STRING,
+                    "fx_dataset_name": NULLABLE_STRING,
+                    "fx_dataset_version": NULLABLE_STRING,
+                },
+                required=("portfolio_id", "dates"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("portfolio:read", "market:read"),
+            False,
+            "Uses point-in-time facts by default and reports external-flow timing semantics.",
+        ),
+        lambda portfolio_id, dates, known_as_of=None, price_dataset_name=None, price_dataset_version=None, fx_dataset_name=None, fx_dataset_version=None: portfolios.performance(
+            portfolio_id,
+            dates,
+            known_as_of=known_as_of,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+        ),
     )
 
     system_methods = {

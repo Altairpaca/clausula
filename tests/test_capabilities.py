@@ -12,6 +12,7 @@ from clausula.capabilities import (
     build_core_registry,
 )
 from clausula.cli import main
+from clausula.sdk import ClausulaClient
 
 
 def test_capability_specs_are_complete_and_discoverable(tmp_path):
@@ -25,6 +26,13 @@ def test_capability_specs_are_complete_and_discoverable(tmp_path):
         "ledger.get_state",
         "ledger.get_transactions",
         "ledger.import_csv",
+        "market.import_fx_csv",
+        "market.import_prices_csv",
+        "market.list_datasets",
+        "portfolio.create",
+        "portfolio.get_performance",
+        "portfolio.get_valuation",
+        "portfolio.set_membership",
         "system.backup",
         "system.check_integrity",
         "system.export",
@@ -90,3 +98,61 @@ def test_cli_is_a_projection_of_capability_registry(tmp_path, monkeypatch, capsy
         ]
     ) == 0
     assert json.loads(capsys.readouterr().out) == state
+
+
+def test_market_portfolio_cli_and_sdk_project_the_same_capabilities(
+    tmp_path, monkeypatch, capsys
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUSULA_HOME", str(home))
+    source = tmp_path / "ledger.csv"
+    source.write_text(
+        "id,date,type,ticker,quantity,amount,fee,currency\n"
+        "cash,2025-01-01,deposit,CASH,0,100,0,USD\n",
+        encoding="utf-8",
+    )
+    prices = tmp_path / "prices.csv"
+    prices.write_text(
+        "date,known_at,ticker,close,currency\n"
+        "2025-01-01,2025-01-01,UNUSED,1,USD\n",
+        encoding="utf-8",
+    )
+
+    main(["account", "create", "broker", "main"])
+    account_id = json.loads(capsys.readouterr().out)["account_id"]
+    main(["ledger", "import", account_id, str(source)])
+    capsys.readouterr()
+    main(
+        [
+            "market",
+            "import-prices",
+            str(prices),
+            "--dataset",
+            "daily",
+            "--version",
+            "v1",
+        ]
+    )
+    assert json.loads(capsys.readouterr().out)["prices"] == 1
+    main(["portfolio", "create", "Household", "--base-currency", "USD"])
+    portfolio_id = json.loads(capsys.readouterr().out)["portfolio_id"]
+    main(
+        [
+            "portfolio",
+            "membership",
+            portfolio_id,
+            account_id,
+            "add",
+            "2025-01-01",
+            "--known-at",
+            "2025-01-01",
+        ]
+    )
+    capsys.readouterr()
+    main(["portfolio", "valuation", portfolio_id, "2025-01-02"])
+    cli_valuation = json.loads(capsys.readouterr().out)
+
+    client = ClausulaClient(home)
+    assert client.market_datasets("daily")[0]["version"] == "v1"
+    assert client.portfolio_valuation(portfolio_id, "2025-01-02") == cli_valuation
+    assert cli_valuation["total_value"] == "100"
