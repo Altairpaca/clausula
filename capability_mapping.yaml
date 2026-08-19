@@ -1,5 +1,5 @@
-version: 4
-status: architecture_mapping
+version: 5
+status: m3_market_portfolio_implemented
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
     disposition: MIGRATE_WITH_REWRITE
@@ -66,6 +66,15 @@ canonical_m0_m2:
   - system.export
   - system.verify_audit
 
+canonical_m3:
+  - market.import_prices_csv
+  - market.import_fx_csv
+  - market.list_datasets
+  - portfolio.create
+  - portfolio.set_membership
+  - portfolio.get_valuation
+  - portfolio.get_performance
+
 implementation_status:
   account.create: implemented
   instrument.resolve: implemented_basic_identifier_registry
@@ -79,10 +88,17 @@ implementation_status:
   ledger.reconcile: implemented_append_only_record
   portfolio.get_positions: provisional_account_projection
   system.check_integrity: implemented
-  system.backup: implemented_database_only
-  system.restore: implemented_database_only
+  system.backup: implemented_verified_database_raw_export_bundle
+  system.restore: implemented_verified_bundle_with_audit_continuation
   system.export: implemented_canonical_jsonl
   system.verify_audit: implemented_hash_chain
+  market.import_prices_csv: implemented_versioned_raw_import
+  market.import_fx_csv: implemented_versioned_raw_import
+  market.list_datasets: implemented
+  portfolio.create: implemented_append_only_raw_replayable
+  portfolio.set_membership: implemented_temporal_append_only
+  portfolio.get_valuation: implemented_decimal_gap_aware
+  portfolio.get_performance: implemented_twr_xirr_drawdown
 
 platform_contract:
   registry: implemented

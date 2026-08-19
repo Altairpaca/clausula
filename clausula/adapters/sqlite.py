@@ -20,8 +20,13 @@ from .migrations import LATEST_SCHEMA_VERSION, migrate
 
 from clausula.domain import (
     CorporateAction,
+    DatasetVersion,
+    FxRate,
     FxConversion,
     InstrumentIdentifier,
+    MarketPrice,
+    Portfolio,
+    PortfolioMembershipEvent,
     SecurityTransfer,
     Transaction,
     canonical_decimal,
@@ -400,16 +405,23 @@ class Store:
 
     def rebuild_catalog(self) -> dict:
         accounts = [dict(row) for row in self.db.execute("SELECT * FROM accounts ORDER BY created_at,id")]
+        portfolios = [
+            dict(row)
+            for row in self.db.execute("SELECT * FROM portfolios ORDER BY created_at,id")
+        ]
         imports = [
             dict(row)
             for row in self.db.execute(
                 """SELECT i.id,i.artifact_id,i.created_at,d.adapter_name,d.adapter_version,
                           d.schema_version,d.input_rows,d.inserted_rows,a.path,a.sha256,
-                          ad.source_path,ad.artifact_kind
+                          ad.source_path,ad.artifact_kind,md.dataset_name,md.version AS dataset_version,
+                          md.provider AS dataset_provider,md.manifest_sha256 AS dataset_manifest_sha256,
+                          md.manifest_json AS dataset_manifest_json
                    FROM imports i
                    JOIN import_details d ON d.import_id=i.id
                    JOIN artifacts a ON a.id=i.artifact_id
                    JOIN artifact_details ad ON ad.artifact_id=a.id
+                   LEFT JOIN market_datasets md ON md.import_batch_id=i.id
                    ORDER BY i.created_at,i.id"""
             )
         ]
@@ -423,7 +435,7 @@ class Store:
                     (item["artifact_id"],),
                 )
             ]
-        return {"accounts": accounts, "imports": imports}
+        return {"accounts": accounts, "portfolios": portfolios, "imports": imports}
 
     def imported_transaction_mapping(self, account_id: str, artifact_id: str) -> dict[str, str]:
         self.require_account(account_id)
@@ -515,6 +527,324 @@ class Store:
         if row is None:
             raise KeyError(f"unknown instrument: {instrument_id}")
         return row
+
+    def add_market_dataset(
+        self,
+        dataset: DatasetVersion,
+        prices: Iterable[MarketPrice],
+        fx_rates: Iterable[FxRate],
+    ) -> dict:
+        price_rows = list(prices)
+        fx_rows = list(fx_rates)
+        if any(row.dataset_id != dataset.id for row in (*price_rows, *fx_rows)):
+            raise ValueError("market observation dataset mismatch")
+        if not price_rows and not fx_rows:
+            raise ValueError("market dataset must contain prices or FX rates")
+        existing = self.db.execute(
+            "SELECT * FROM market_datasets WHERE dataset_name=? AND version=?",
+            (dataset.dataset_name, dataset.version),
+        ).fetchone()
+        if existing is not None:
+            if existing["manifest_sha256"] != dataset.manifest_sha256:
+                raise ValueError(
+                    f"market dataset version conflict: {dataset.dataset_name}/{dataset.version}"
+                )
+            return {
+                "dataset_id": existing["id"],
+                "dataset_name": existing["dataset_name"],
+                "version": existing["version"],
+                "provider": existing["provider"],
+                "source_artifact_id": existing["source_artifact_id"],
+                "import_batch_id": existing["import_batch_id"],
+                "manifest_sha256": existing["manifest_sha256"],
+                "prices": self.db.execute(
+                    "SELECT count(*) FROM market_prices WHERE dataset_id=?", (existing["id"],)
+                ).fetchone()[0],
+                "fx_rates": self.db.execute(
+                    "SELECT count(*) FROM market_fx_rates WHERE dataset_id=?", (existing["id"],)
+                ).fetchone()[0],
+            }
+        with self.db:
+            self._insert_import_batch(
+                dataset.import_batch_id,
+                dataset.source_artifact_id,
+                dataset.adapter_name,
+                dataset.adapter_version,
+                dataset.schema_version,
+                len(price_rows) + len(fx_rows),
+                len(price_rows) + len(fx_rows),
+            )
+            self.db.execute(
+                """INSERT INTO market_datasets(
+                       id,dataset_name,version,provider,adapter_name,adapter_version,
+                       schema_version,source_artifact_id,import_batch_id,manifest_sha256,
+                       manifest_json,recorded_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    dataset.id,
+                    dataset.dataset_name,
+                    dataset.version,
+                    dataset.provider,
+                    dataset.adapter_name,
+                    dataset.adapter_version,
+                    dataset.schema_version,
+                    dataset.source_artifact_id,
+                    dataset.import_batch_id,
+                    dataset.manifest_sha256,
+                    dataset.manifest_json,
+                    dataset.recorded_at,
+                ),
+            )
+            for price in price_rows:
+                instrument = self.db.execute(
+                    "SELECT currency FROM instruments WHERE id=?", (price.instrument_id,)
+                ).fetchone()
+                if instrument is None:
+                    raise KeyError(f"unknown instrument: {price.instrument_id}")
+                if instrument["currency"] != price.currency:
+                    raise ValueError("market price currency must match instrument currency")
+                self.db.execute(
+                    "INSERT INTO market_prices VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        price.id,
+                        price.dataset_id,
+                        price.instrument_id,
+                        price.observed_at,
+                        price.known_at,
+                        price.recorded_at,
+                        canonical_decimal(price.close),
+                        price.currency,
+                        price.quality,
+                    ),
+                )
+            for rate in fx_rows:
+                self.db.execute(
+                    "INSERT INTO market_fx_rates VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        rate.id,
+                        rate.dataset_id,
+                        rate.observed_at,
+                        rate.known_at,
+                        rate.recorded_at,
+                        rate.from_currency,
+                        rate.to_currency,
+                        canonical_decimal(rate.rate),
+                        rate.quality,
+                    ),
+                )
+            append_audit_event(
+                self.db,
+                operation="market.dataset_import",
+                object_type="market_dataset",
+                object_id=dataset.id,
+                payload={
+                    "dataset_name": dataset.dataset_name,
+                    "version": dataset.version,
+                    "provider": dataset.provider,
+                    "source_artifact_id": dataset.source_artifact_id,
+                    "import_batch_id": dataset.import_batch_id,
+                    "manifest_sha256": dataset.manifest_sha256,
+                    "price_rows": len(price_rows),
+                    "fx_rows": len(fx_rows),
+                },
+            )
+        return {
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.dataset_name,
+            "version": dataset.version,
+            "provider": dataset.provider,
+            "source_artifact_id": dataset.source_artifact_id,
+            "import_batch_id": dataset.import_batch_id,
+            "manifest_sha256": dataset.manifest_sha256,
+            "prices": len(price_rows),
+            "fx_rates": len(fx_rows),
+        }
+
+    def market_datasets(self, dataset_name: str | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM market_datasets"
+        args: list[str] = []
+        if dataset_name is not None:
+            query += " WHERE dataset_name=?"
+            args.append(dataset_name)
+        return self.db.execute(query + " ORDER BY recorded_at,id", args).fetchall()
+
+    def market_price(
+        self,
+        instrument_id: str,
+        as_of: str,
+        known_as_of: str | None = None,
+        dataset_name: str | None = None,
+        dataset_version: str | None = None,
+    ) -> sqlite3.Row | None:
+        require_uuid(instrument_id, "instrument_id")
+        if dataset_version is not None and dataset_name is None:
+            raise ValueError("dataset_version requires dataset_name")
+        observed_cutoff = canonical_timestamp(as_of)
+        known_cutoff = canonical_timestamp(known_as_of or as_of)
+        clauses = [
+            "p.instrument_id=?",
+            "p.observed_at<=?",
+            "p.known_at<=?",
+            "p.quality='accepted'",
+        ]
+        args: list[str] = [instrument_id, observed_cutoff, known_cutoff]
+        if dataset_name is not None:
+            clauses.append("d.dataset_name=?")
+            args.append(dataset_name)
+        if dataset_version is not None:
+            clauses.append("d.version=?")
+            args.append(dataset_version)
+        rows = self.db.execute(
+            """SELECT p.*,d.dataset_name,d.version AS dataset_version,d.provider
+               FROM market_prices p JOIN market_datasets d ON d.id=p.dataset_id
+               WHERE """
+            + " AND ".join(clauses)
+            + " ORDER BY p.observed_at DESC,p.known_at DESC,p.recorded_at DESC,p.id DESC",
+            args,
+        ).fetchall()
+        if not rows:
+            return None
+        latest_observed = rows[0]["observed_at"]
+        latest = [row for row in rows if row["observed_at"] == latest_observed]
+        values = {(row["close"], row["currency"]) for row in latest}
+        if len(values) > 1 and (dataset_name is None or dataset_version is None):
+            raise ValueError(
+                f"conflicting accepted market prices for {instrument_id} at {latest_observed}; select a dataset version"
+            )
+        return latest[0]
+
+    def market_fx_rate(
+        self,
+        from_currency: str,
+        to_currency: str,
+        as_of: str,
+        known_as_of: str | None = None,
+        dataset_name: str | None = None,
+        dataset_version: str | None = None,
+    ) -> sqlite3.Row | None:
+        if dataset_version is not None and dataset_name is None:
+            raise ValueError("dataset_version requires dataset_name")
+        observed_cutoff = canonical_timestamp(as_of)
+        known_cutoff = canonical_timestamp(known_as_of or as_of)
+        clauses = [
+            "r.from_currency=?",
+            "r.to_currency=?",
+            "r.observed_at<=?",
+            "r.known_at<=?",
+            "r.quality='accepted'",
+        ]
+        args: list[str] = [from_currency.upper(), to_currency.upper(), observed_cutoff, known_cutoff]
+        if dataset_name is not None:
+            clauses.append("d.dataset_name=?")
+            args.append(dataset_name)
+        if dataset_version is not None:
+            clauses.append("d.version=?")
+            args.append(dataset_version)
+        rows = self.db.execute(
+            """SELECT r.*,d.dataset_name,d.version AS dataset_version,d.provider
+               FROM market_fx_rates r JOIN market_datasets d ON d.id=r.dataset_id
+               WHERE """
+            + " AND ".join(clauses)
+            + " ORDER BY r.observed_at DESC,r.known_at DESC,r.recorded_at DESC,r.id DESC",
+            args,
+        ).fetchall()
+        if not rows:
+            return None
+        latest_observed = rows[0]["observed_at"]
+        latest = [row for row in rows if row["observed_at"] == latest_observed]
+        values = {row["rate"] for row in latest}
+        if len(values) > 1 and (dataset_name is None or dataset_version is None):
+            raise ValueError(
+                f"conflicting accepted FX rates for {from_currency}/{to_currency} at {latest_observed}; select a dataset version"
+            )
+        return latest[0]
+
+    def add_portfolio(self, portfolio: Portfolio) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO portfolios VALUES(?,?,?,?,?,?)",
+                (
+                    portfolio.id,
+                    portfolio.name,
+                    portfolio.base_currency,
+                    portfolio.created_at,
+                    portfolio.source_artifact_id,
+                    portfolio.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="portfolio.create",
+                object_type="portfolio",
+                object_id=portfolio.id,
+                payload={"name": portfolio.name, "base_currency": portfolio.base_currency},
+            )
+
+    def portfolio(self, portfolio_id: str) -> sqlite3.Row:
+        require_uuid(portfolio_id, "portfolio_id")
+        row = self.db.execute("SELECT * FROM portfolios WHERE id=?", (portfolio_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown portfolio: {portfolio_id}")
+        return row
+
+    def add_portfolio_membership(self, event: PortfolioMembershipEvent) -> None:
+        self.portfolio(event.portfolio_id)
+        self.require_account(event.account_id)
+        with self.db:
+            self.db.execute(
+                "INSERT INTO portfolio_membership_events VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    event.id,
+                    event.portfolio_id,
+                    event.account_id,
+                    event.action,
+                    event.effective_at,
+                    event.known_at,
+                    event.recorded_at,
+                    event.source_artifact_id,
+                    event.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation=f"portfolio.membership_{event.action}",
+                object_type="portfolio_membership",
+                object_id=event.id,
+                payload={
+                    "portfolio_id": event.portfolio_id,
+                    "account_id": event.account_id,
+                    "effective_at": event.effective_at,
+                    "known_at": event.known_at,
+                },
+            )
+
+    def portfolio_accounts(
+        self, portfolio_id: str, as_of: str, known_as_of: str | None = None
+    ) -> list[str]:
+        self.portfolio(portfolio_id)
+        effective_cutoff = canonical_timestamp(as_of)
+        knowledge_cutoff = canonical_timestamp(known_as_of or as_of)
+        rows = self.db.execute(
+            """SELECT e.account_id,e.action
+               FROM portfolio_membership_events e
+               WHERE e.portfolio_id=? AND e.effective_at<=? AND e.known_at<=?
+                 AND e.id=(
+                     SELECT x.id FROM portfolio_membership_events x
+                     WHERE x.portfolio_id=e.portfolio_id AND x.account_id=e.account_id
+                       AND x.effective_at<=? AND x.known_at<=?
+                     ORDER BY x.effective_at DESC,x.known_at DESC,x.recorded_at DESC,x.id DESC
+                     LIMIT 1
+                 )
+               ORDER BY e.account_id""",
+            (
+                portfolio_id,
+                effective_cutoff,
+                knowledge_cutoff,
+                effective_cutoff,
+                knowledge_cutoff,
+            ),
+        ).fetchall()
+        return [row["account_id"] for row in rows if row["action"] == "add"]
 
     def import_batch(
         self,

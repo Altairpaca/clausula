@@ -3,7 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
-from clausula.domain import CorporateAction, FxConversion, InstrumentIdentifier, SecurityTransfer, Transaction
+from clausula.domain import (
+    CorporateAction,
+    DatasetVersion,
+    FxRate,
+    FxConversion,
+    InstrumentIdentifier,
+    MarketPrice,
+    Portfolio,
+    PortfolioMembershipEvent,
+    SecurityTransfer,
+    Transaction,
+)
 
 
 @runtime_checkable
@@ -115,3 +126,41 @@ class CoreRepository(LedgerRepository, Protocol):
     def imported_transaction_mapping(
         self, account_id: str, artifact_id: str
     ) -> Mapping[str, str]: ...
+
+    def add_market_dataset(
+        self,
+        dataset: DatasetVersion,
+        prices: Iterable[MarketPrice],
+        fx_rates: Iterable[FxRate],
+    ) -> Mapping[str, Any]: ...
+
+    def market_price(
+        self,
+        instrument_id: str,
+        as_of: str,
+        known_as_of: str | None = None,
+        dataset_name: str | None = None,
+        dataset_version: str | None = None,
+    ) -> Mapping[str, Any] | None: ...
+
+    def market_fx_rate(
+        self,
+        from_currency: str,
+        to_currency: str,
+        as_of: str,
+        known_as_of: str | None = None,
+        dataset_name: str | None = None,
+        dataset_version: str | None = None,
+    ) -> Mapping[str, Any] | None: ...
+
+    def market_datasets(self, dataset_name: str | None = None) -> list[Mapping[str, Any]]: ...
+
+    def add_portfolio(self, portfolio: Portfolio) -> None: ...
+
+    def portfolio(self, portfolio_id: str) -> Mapping[str, Any]: ...
+
+    def add_portfolio_membership(self, event: PortfolioMembershipEvent) -> None: ...
+
+    def portfolio_accounts(
+        self, portfolio_id: str, as_of: str, known_as_of: str | None = None
+    ) -> list[str]: ...

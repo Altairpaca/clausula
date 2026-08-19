@@ -46,6 +46,28 @@
 - Portfolio valuation requires versioned market snapshots and explicit FX valuation policy.
 - Complete CLI workflows for correction, reconciliation, FX, security transfer, and corporate action remain pending.
 
+## M3 completion gate
+
+M3 is accepted when the following are true:
+
+- versioned daily price and FX imports are immutable, content-addressed, and
+  fail closed on provider conflicts;
+- market queries enforce both observed/effective and known-time cutoffs;
+- portfolio membership is separate from accounts and is replayable from raw
+  event envelopes;
+- valuation returns Decimal-string totals, allocation, concentration, currency
+  exposure, and explicit completeness gaps;
+- TWR, XIRR/MWR, and drawdown have deterministic tests and declare flow timing;
+- backup/export/rebuild cover market datasets and portfolio membership;
+- capability, CLI, and SDK projections exercise the same service contracts.
+
+The M3 gate is met by the current 65-test suite, compile and diff checks, and
+the M3 ADR in `docs/adr/0004-market-portfolio-temporal-analytics.md`.
+
 ## Explicitly deferred
 
-Market data, valuation, performance, Policy, Decision, Research, HTTP, MCP, Web, plugins, Agents, and brokerage actions remain outside this release candidate. `portfolio.get_positions` is only an account-state projection and is not the Phase 3 Portfolio domain.
+Policy, Decision, Research, HTTP, MCP, Web, plugins, Agents, and brokerage
+actions remain outside this release candidate. High-frequency market data,
+look-through exposure, short positions, and provider network adapters remain
+outside M3. `portfolio.get_positions` is superseded by the M3 Portfolio
+valuation/performance capabilities.

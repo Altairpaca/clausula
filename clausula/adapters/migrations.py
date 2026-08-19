@@ -152,6 +152,100 @@ CREATE TRIGGER reconciliation_observations_reject_delete BEFORE DELETE ON reconc
 BEGIN SELECT RAISE(ABORT, 'reconciliation_observations is append-only'); END;
 """,
     ),
+    Migration(
+        4,
+        "market_snapshots_and_dataset_versions",
+        """
+CREATE TABLE market_datasets(
+    id TEXT PRIMARY KEY,
+    dataset_name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    adapter_name TEXT NOT NULL,
+    adapter_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    manifest_sha256 TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(dataset_name, version)
+);
+CREATE TABLE market_prices(
+    id TEXT PRIMARY KEY,
+    dataset_id TEXT NOT NULL REFERENCES market_datasets(id),
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    observed_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    close TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    quality TEXT NOT NULL,
+    UNIQUE(dataset_id, instrument_id, observed_at)
+);
+CREATE TABLE market_fx_rates(
+    id TEXT PRIMARY KEY,
+    dataset_id TEXT NOT NULL REFERENCES market_datasets(id),
+    observed_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    from_currency TEXT NOT NULL,
+    to_currency TEXT NOT NULL,
+    rate TEXT NOT NULL,
+    quality TEXT NOT NULL,
+    UNIQUE(dataset_id, observed_at, from_currency, to_currency)
+);
+CREATE INDEX market_prices_lookup ON market_prices(instrument_id, observed_at, known_at);
+CREATE INDEX market_fx_lookup ON market_fx_rates(from_currency, to_currency, observed_at, known_at);
+CREATE TRIGGER market_datasets_reject_update BEFORE UPDATE ON market_datasets
+BEGIN SELECT RAISE(ABORT, 'market_datasets is append-only'); END;
+CREATE TRIGGER market_datasets_reject_delete BEFORE DELETE ON market_datasets
+BEGIN SELECT RAISE(ABORT, 'market_datasets is append-only'); END;
+CREATE TRIGGER market_prices_reject_update BEFORE UPDATE ON market_prices
+BEGIN SELECT RAISE(ABORT, 'market_prices is append-only'); END;
+CREATE TRIGGER market_prices_reject_delete BEFORE DELETE ON market_prices
+BEGIN SELECT RAISE(ABORT, 'market_prices is append-only'); END;
+CREATE TRIGGER market_fx_rates_reject_update BEFORE UPDATE ON market_fx_rates
+BEGIN SELECT RAISE(ABORT, 'market_fx_rates is append-only'); END;
+CREATE TRIGGER market_fx_rates_reject_delete BEFORE DELETE ON market_fx_rates
+BEGIN SELECT RAISE(ABORT, 'market_fx_rates is append-only'); END;
+""",
+    ),
+    Migration(
+        5,
+        "portfolio_membership_events",
+        """
+CREATE TABLE portfolios(
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_currency TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE portfolio_membership_events(
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL REFERENCES portfolios(id),
+    account_id TEXT NOT NULL REFERENCES accounts(id),
+    action TEXT NOT NULL CHECK(action IN ('add','remove')),
+    effective_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE INDEX portfolio_membership_as_of
+ON portfolio_membership_events(portfolio_id, account_id, effective_at, known_at, recorded_at);
+CREATE TRIGGER portfolios_reject_update BEFORE UPDATE ON portfolios
+BEGIN SELECT RAISE(ABORT, 'portfolios is append-only'); END;
+CREATE TRIGGER portfolios_reject_delete BEFORE DELETE ON portfolios
+BEGIN SELECT RAISE(ABORT, 'portfolios is append-only'); END;
+CREATE TRIGGER portfolio_membership_events_reject_update BEFORE UPDATE ON portfolio_membership_events
+BEGIN SELECT RAISE(ABORT, 'portfolio_membership_events is append-only'); END;
+CREATE TRIGGER portfolio_membership_events_reject_delete BEFORE DELETE ON portfolio_membership_events
+BEGIN SELECT RAISE(ABORT, 'portfolio_membership_events is append-only'); END;
+""",
+    ),
 )
 
 

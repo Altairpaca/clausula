@@ -273,6 +273,23 @@ class LedgerService:
     def positions(self, account_id: str, as_of: str | None = None) -> dict[str, str]:
         return self.state(account_id, as_of)["positions"]
 
+    def external_flows(
+        self,
+        account_id: str,
+        through: str,
+        *,
+        known_as_of: str | None = None,
+    ) -> dict[str, str]:
+        flows: dict[str, Decimal] = {}
+        for transaction in self.transactions(
+            account_id, through, known_as_of=known_as_of
+        ):
+            day = transaction["effective_at"][:10]
+            for leg in transaction["legs"]:
+                if leg["leg_type"] == "external":
+                    flows[day] = flows.get(day, Decimal(0)) - dec(leg["amount"])
+        return {day: canonical_decimal(amount) for day, amount in sorted(flows.items())}
+
     def cost_basis(
         self,
         account_id: str,

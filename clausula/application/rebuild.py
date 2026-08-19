@@ -7,6 +7,8 @@ from typing import Any
 from clausula.domain import TransactionLeg, canonical_decimal, dec
 
 from .ledger import MANUAL_EVENT_FORMAT, LedgerService
+from .market import MarketService
+from .portfolio import PORTFOLIO_EVENT_FORMAT, PortfolioService
 from .ports import CoreRepository
 
 
@@ -23,12 +25,16 @@ class LedgerRebuilder:
 
     def rebuild(self) -> dict[str, Any]:
         catalog = self.source.rebuild_catalog()
-        if self.target.rebuild_catalog()["accounts"]:
+        target_catalog = self.target.rebuild_catalog()
+        if target_catalog["accounts"] or target_catalog["portfolios"] or target_catalog["imports"]:
             raise RebuildError("target repository must be empty")
         target_service = LedgerService(self.target)
+        target_market = MarketService(self.target)
+        target_portfolios = PortfolioService(self.target)
         account_mapping: dict[str, str] = {}
         transaction_mapping: dict[str, str] = {}
         instrument_mapping: dict[str, str] = {}
+        portfolio_mapping: dict[str, str] = {}
         for account in catalog["accounts"]:
             account_mapping[account["id"]] = target_service.create_account(
                 account["institution"], account["name"]
@@ -38,6 +44,36 @@ class LedgerRebuilder:
         warnings: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         for batch in catalog["imports"]:
+            if batch["adapter_name"] in {"csv-prices", "csv-fx"}:
+                source_path = Path(batch["raw_path"])
+                if batch["adapter_name"] == "csv-prices":
+                    result = target_market.import_prices_csv(
+                        source_path,
+                        dataset_name=batch["dataset_name"],
+                        version=batch["dataset_version"],
+                        provider=batch["dataset_provider"],
+                    )
+                else:
+                    result = target_market.import_fx_csv(
+                        source_path,
+                        dataset_name=batch["dataset_name"],
+                        version=batch["dataset_version"],
+                        provider=batch["dataset_provider"],
+                    )
+                if result["manifest_sha256"] != batch["dataset_manifest_sha256"]:
+                    raise RebuildError(
+                        f"market manifest mismatch during rebuild: {batch['id']}"
+                    )
+                replayed.append(
+                    {
+                        "kind": "market_dataset",
+                        "operation": "market.import",
+                        "source_import_batch_id": batch["id"],
+                        "source_artifact_sha256": batch["sha256"],
+                        "result": result,
+                    }
+                )
+                continue
             if batch["adapter_name"] == "csv":
                 source_path = Path(batch["raw_path"])
                 if not source_path.is_file():
@@ -89,14 +125,19 @@ class LedgerRebuilder:
             source_path = Path(batch["raw_path"])
             try:
                 event = json.loads(source_path.read_text(encoding="utf-8"))
-                if event.get("format") != MANUAL_EVENT_FORMAT:
+                if event.get("format") not in {
+                    MANUAL_EVENT_FORMAT,
+                    PORTFOLIO_EVENT_FORMAT,
+                }:
                     raise ValueError("unknown manual event format")
                 result = self._replay_manual_event(
                     target_service,
+                    target_portfolios,
                     event,
                     account_mapping,
                     instrument_mapping,
                     transaction_mapping,
+                    portfolio_mapping,
                 )
                 replayed.append(
                     {
@@ -145,13 +186,52 @@ class LedgerRebuilder:
                     },
                 }
             )
+        portfolio_comparisons = []
+        for source_portfolio in catalog["portfolios"]:
+            source_portfolio_id = source_portfolio["id"]
+            target_portfolio_id = portfolio_mapping.get(source_portfolio_id)
+            if target_portfolio_id is None:
+                consistent = False
+                portfolio_comparisons.append(
+                    {
+                        "source_portfolio_id": source_portfolio_id,
+                        "target_portfolio_id": None,
+                        "matches": False,
+                    }
+                )
+                continue
+            source_accounts = self.source.portfolio_accounts(
+                source_portfolio_id, "9999-12-31", "9999-12-31"
+            )
+            target_accounts = self.target.portfolio_accounts(
+                target_portfolio_id, "9999-12-31", "9999-12-31"
+            )
+            expected_accounts = sorted(account_mapping[item] for item in source_accounts)
+            target_portfolio = self.target.portfolio(target_portfolio_id)
+            matches = (
+                target_portfolio["name"] == source_portfolio["name"]
+                and target_portfolio["base_currency"] == source_portfolio["base_currency"]
+                and target_accounts == expected_accounts
+            )
+            consistent = consistent and matches
+            portfolio_comparisons.append(
+                {
+                    "source_portfolio_id": source_portfolio_id,
+                    "target_portfolio_id": target_portfolio_id,
+                    "matches": matches,
+                    "source_accounts": source_accounts,
+                    "target_accounts": target_accounts,
+                }
+            )
         return {
             "consistent": consistent and not warnings,
             "account_mapping": account_mapping,
             "instrument_mapping": instrument_mapping,
             "transaction_mapping": transaction_mapping,
+            "portfolio_mapping": portfolio_mapping,
             "replayed_imports": replayed,
             "comparisons": comparisons,
+            "portfolio_comparisons": portfolio_comparisons,
             "warnings": warnings,
         }
 
@@ -175,12 +255,34 @@ class LedgerRebuilder:
     def _replay_manual_event(
         self,
         service: LedgerService,
+        portfolios: PortfolioService,
         event: dict[str, Any],
         account_mapping: dict[str, str],
         instrument_mapping: dict[str, str],
         transaction_mapping: dict[str, str],
+        portfolio_mapping: dict[str, str],
     ) -> Any:
         operation = event["operation"]
+        if event.get("format") == PORTFOLIO_EVENT_FORMAT:
+            if operation == "portfolio.create":
+                portfolio_id = portfolios.create(
+                    event["name"],
+                    event["base_currency"],
+                    created_at=event["created_at"],
+                )
+                portfolio_mapping[event["portfolio_id"]] = portfolio_id
+                return {"portfolio_id": portfolio_id}
+            if operation == "portfolio.set_membership":
+                membership_event_id = portfolios.set_membership(
+                    portfolio_mapping[event["portfolio_id"]],
+                    account_mapping[event["account_id"]],
+                    event["action"],
+                    event["effective_at"],
+                    known_at=event["known_at"],
+                    recorded_at=event["recorded_at"],
+                )
+                return {"membership_event_id": membership_event_id}
+            raise ValueError(f"unsupported portfolio operation: {operation}")
         if operation == "ledger.record_cash_transfer":
             result = service.record_cash_transfer(
                 account_mapping[event["source_account_id"]],

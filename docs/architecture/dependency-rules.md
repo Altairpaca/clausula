@@ -9,10 +9,16 @@ domain <- application/services <- capabilities <- CLI / HTTP / MCP / scheduler
               storage and source adapters
 ```
 
-The current M1/M2 slice has these concrete boundaries:
+The current M1-M3 slice has these concrete boundaries:
 
-- `clausula.domain` owns identity, temporal, Decimal, instrument, transaction, leg, and reconciliation contracts. It uses only the Python standard library.
-- `clausula.application` owns canonical Ledger write operations, typed repository ports, and deterministic replay. It does not construct a concrete adapter.
+- `clausula.domain` owns identity, temporal, Decimal, instrument, transaction,
+  leg, reconciliation, market observation, and portfolio membership contracts.
+  It uses only the Python standard library.
+- `clausula.application` owns canonical Ledger, Market import, and Portfolio
+  operations, typed repository ports, and deterministic replay. It does not
+  construct a concrete adapter.
+- `clausula.analytics` owns pure Decimal cost-basis, valuation, aggregation,
+  TWR, XIRR, and drawdown functions over canonical inputs.
 - `clausula.capabilities` owns executable client contracts, permission/confirmation gates, and schema validation. It depends on application ports, never on SQLite.
 - `clausula.adapters.sqlite` owns SQLite schema, migrations, append-only enforcement, raw filesystem storage, backup, and restore.
 - `clausula.cli` and `clausula.sdk` are client projections over the Capability Registry. Direct SDK service methods are temporary convenience wrappers over the same service implementation.
