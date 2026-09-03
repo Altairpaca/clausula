@@ -25,6 +25,12 @@ from clausula.domain import PolicyRule, new_id
 
 
 def _write(path: Path, fields: list[str], rows: list[dict]) -> None:
+    if "known_at" not in fields:
+        fields = [*fields[:2], "known_at", *fields[2:]]
+        rows = [
+            {**row, "known_at": row.get("date") or row.get("effective_at") or "2025-01-01"}
+            for row in rows
+        ]
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
@@ -287,7 +293,7 @@ def test_planning_backup_export_and_clean_rebuild(tmp_path):
     store.export(export)
     assert b'"table":"plan_projected_states"' in export.read_bytes()
     bundle = tmp_path / "planning.zip"
-    assert store.backup_bundle(bundle)["schema_version"] == 8
+    assert store.backup_bundle(bundle)["schema_version"] == 11
     restored = Store(tmp_path / "restored")
     restored.restore_bundle(bundle)
     assert restored.plan(created["plan"]["id"])["name"] == "Rebuild plan"

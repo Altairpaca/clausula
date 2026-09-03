@@ -8,6 +8,8 @@ from .portfolio import PortfolioService
 from .policy import PolicyService
 from .planning import PlanningError, PlanningService
 from .decision import DecisionError, DecisionService
+from .research import ResearchError, ResearchService
+from .recommendation import RecommendationService
 
 __all__ = [
     "CoreRepository",
@@ -24,4 +26,7 @@ __all__ = [
     "DecisionError",
     "DecisionService",
     "RebuildError",
+    "ResearchError",
+    "ResearchService",
+    "RecommendationService",
 ]

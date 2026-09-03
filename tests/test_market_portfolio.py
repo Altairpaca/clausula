@@ -10,6 +10,8 @@ from clausula.application import LedgerRebuilder, MarketService, PortfolioServic
 
 
 def write_rows(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    if "known_at" not in fieldnames and any("known_at" in row for row in rows):
+        fieldnames = [*fieldnames[:2], "known_at", *fieldnames[2:]]
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
@@ -108,11 +110,11 @@ def _portfolio_fixture(tmp_path: Path):
     ledger_file = tmp_path / "ledger.csv"
     write_rows(
         ledger_file,
-        ["id", "date", "type", "ticker", "quantity", "amount", "fee", "currency", "asset_type"],
+        ["id", "date", "known_at", "type", "ticker", "quantity", "amount", "fee", "currency", "asset_type"],
         [
-            {"id": "d1", "date": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "200", "fee": "0", "currency": "USD", "asset_type": "cash"},
-            {"id": "b1", "date": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "2", "amount": "100", "fee": "0", "currency": "USD", "asset_type": "stock"},
-            {"id": "d2", "date": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "3200", "fee": "0", "currency": "TWD", "asset_type": "cash"},
+            {"id": "d1", "date": "2025-01-01", "known_at": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "200", "fee": "0", "currency": "USD", "asset_type": "cash"},
+            {"id": "b1", "date": "2025-01-01", "known_at": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "2", "amount": "100", "fee": "0", "currency": "USD", "asset_type": "stock"},
+            {"id": "d2", "date": "2025-01-01", "known_at": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "3200", "fee": "0", "currency": "TWD", "asset_type": "cash"},
         ],
     )
     ledger.import_csv(account, ledger_file)
@@ -164,7 +166,7 @@ def test_portfolio_missing_market_fact_is_explicit_not_zero_filled(tmp_path):
     write_rows(
         source,
         ["id", "date", "type", "ticker", "quantity", "amount", "fee", "currency"],
-        [{"id": "b1", "date": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "1", "amount": "10", "fee": "0", "currency": "USD"}],
+        [{"id": "b1", "date": "2025-01-01", "known_at": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "1", "amount": "10", "fee": "0", "currency": "USD"}],
     )
     ledger.import_csv(account, source)
 
@@ -198,8 +200,8 @@ def test_portfolio_aggregates_accounts_and_recomputes_weights(tmp_path):
     cash = tmp_path / "second.csv"
     write_rows(
         cash,
-        ["id", "date", "type", "ticker", "quantity", "amount", "fee", "currency"],
-        [{"id": "d1", "date": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "80", "fee": "0", "currency": "USD"}],
+        ["id", "date", "known_at", "type", "ticker", "quantity", "amount", "fee", "currency"],
+        [{"id": "d1", "date": "2025-01-01", "known_at": "2025-01-01", "type": "deposit", "ticker": "CASH", "quantity": "0", "amount": "80", "fee": "0", "currency": "USD"}],
     )
     ledger.import_csv(second_account, cash)
     portfolios = PortfolioService(store)

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Any, Iterable, Iterator, Mapping
 
@@ -46,6 +47,15 @@ from clausula.domain import (
     UnresolvedConstraint,
     SecurityTransfer,
     Transaction,
+    ResearchClaim,
+    ResearchContradiction,
+    ResearchDocument,
+    ResearchEvidence,
+    ResearchLink,
+    ResearchThesis,
+    ThesisRevision,
+    Recommendation,
+    RecommendationAlternative,
     canonical_decimal,
     canonical_timestamp,
     new_id,
@@ -188,6 +198,13 @@ APPEND_ONLY_TABLES = (
     "corrections",
     "transfer_links",
     "reconciliation_records",
+    "research_documents",
+    "research_claims",
+    "research_evidence",
+    "research_contradictions",
+    "research_theses",
+    "thesis_revisions",
+    "research_links",
 )
 
 
@@ -197,7 +214,7 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         self.raw_root = self.root / "raw"
         self.raw_root.mkdir(exist_ok=True)
-        self.db = sqlite3.connect(self.root / "clausula.db")
+        self.db = sqlite3.connect(self.root / "clausula.db", check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self._initialize_schema()
@@ -252,6 +269,11 @@ class Store:
             """
         )
         for table in APPEND_ONLY_TABLES:
+            if self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone() is None:
+                continue
             self.db.executescript(
                 f"""
                 CREATE TRIGGER IF NOT EXISTS {table}_reject_update
@@ -287,6 +309,33 @@ class Store:
 
     def verify_audit_chain(self) -> dict:
         return verify_audit_chain(self.db)
+
+    def record_adapter_invocation(
+        self,
+        *,
+        adapter: str,
+        actor_type: str,
+        actor_id: str,
+        capability: str,
+        side_effect: str,
+        confirmed: bool,
+        succeeded: bool,
+    ) -> str:
+        with self.write_transaction():
+            return append_audit_event(
+                self.db,
+                operation=f"{adapter}.invoke",
+                object_type="capability_invocation",
+                object_id=new_id(),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                payload={
+                    "capability": capability,
+                    "side_effect": side_effect,
+                    "confirmed": confirmed,
+                    "succeeded": succeeded,
+                },
+            )
 
     def export(self, destination: str | Path) -> str:
         return write_canonical_export(self.db, destination)
@@ -369,7 +418,7 @@ class Store:
 
         artifact_id = new_id()
         media_type = mimetypes.guess_type(source.name)[0]
-        with self.db:
+        with self.write_transaction():
             self.db.execute(
                 "INSERT INTO artifacts(id,path,sha256,created_at) VALUES(?,?,?,?)",
                 (artifact_id, f"raw/{digest}", digest, now()),
@@ -563,12 +612,47 @@ class Store:
                     "review_schedules": [dict(row) for row in self.db.execute("SELECT * FROM decision_review_schedules WHERE decision_id=? ORDER BY due_at,id", (decision_id,))],
                 }
             )
+        research = {
+            "documents": [dict(row) for row in self.db.execute(
+                "SELECT * FROM research_documents ORDER BY recorded_at,id"
+            )],
+            "claims": [dict(row) for row in self.db.execute(
+                "SELECT * FROM research_claims ORDER BY recorded_at,id"
+            )],
+            "evidence": [dict(row) for row in self.db.execute(
+                "SELECT * FROM research_evidence ORDER BY recorded_at,id"
+            )],
+            "contradictions": [dict(row) for row in self.db.execute(
+                "SELECT * FROM research_contradictions ORDER BY recorded_at,id"
+            )],
+            "theses": [],
+            "links": [dict(row) for row in self.db.execute(
+                "SELECT * FROM research_links ORDER BY created_at,id"
+            )],
+        }
+        for thesis in self.db.execute(
+            "SELECT * FROM research_theses ORDER BY created_at,id"
+        ):
+            research["theses"].append(
+                {
+                    "thesis": dict(thesis),
+                    "revisions": [
+                        dict(row)
+                        for row in self.db.execute(
+                            "SELECT * FROM thesis_revisions WHERE thesis_id=? "
+                            "ORDER BY revision_number,id",
+                            (thesis["id"],),
+                        )
+                    ],
+                }
+            )
         return {
             "accounts": accounts,
             "portfolios": portfolios,
             "policies": policies,
             "plans": plans,
             "decisions": decisions,
+            "research": research,
             "imports": imports,
         }
 
@@ -626,7 +710,7 @@ class Store:
         if row:
             return row["instrument_id"]
         instrument_id = new_id()
-        with self.db:
+        with self.write_transaction():
             self.db.execute(
                 "INSERT INTO instruments VALUES(?,?,?,?,?,?)",
                 (
@@ -1471,8 +1555,11 @@ class Store:
         ).fetchall()
 
     def add_decision_policy_link(self, link: DecisionPolicyLink) -> None:
-        self.decision(link.decision_id)
-        self.policy_version(link.policy_version_id)
+        decision = self.decision(link.decision_id)
+        version = self.policy_version(link.policy_version_id)
+        policy = self.policy(version["policy_id"])
+        if policy["portfolio_id"] != decision["portfolio_id"]:
+            raise ValueError("decision policy link crosses portfolio boundary")
         with self.write_transaction():
             self.db.execute(
                 "INSERT INTO decision_policy_links VALUES(?,?,?,?)",
@@ -1510,9 +1597,17 @@ class Store:
             )
 
     def add_decision_transaction_link(self, link: DecisionTransactionLink) -> None:
-        self.decision(link.decision_id)
-        if self.transaction(link.transaction_id) is None:
+        decision = self.decision(link.decision_id)
+        transaction = self.transaction(link.transaction_id)
+        if transaction is None:
             raise KeyError(f"unknown transaction: {link.transaction_id}")
+        account_ids = self.portfolio_accounts(
+            decision["portfolio_id"],
+            transaction["effective_at"],
+            transaction["known_at"],
+        )
+        if transaction["account_id"] not in account_ids:
+            raise ValueError("decision transaction link crosses portfolio boundary")
         with self.write_transaction():
             self.db.execute(
                 "INSERT INTO decision_transaction_links VALUES(?,?,?,?,?)",
@@ -1578,6 +1673,458 @@ class Store:
             "statements": self.db.execute("SELECT * FROM decision_statements WHERE decision_id=? ORDER BY kind,statement_key,id", (decision_id,)).fetchall(),
             "review_schedules": self.db.execute("SELECT * FROM decision_review_schedules WHERE decision_id=? ORDER BY due_at,id", (decision_id,)).fetchall(),
         }
+
+    def add_research_document(self, document: ResearchDocument) -> None:
+        self._require_import_artifact(document.source_artifact_id, document.import_batch_id)
+        with self.write_transaction():
+            self.db.execute(
+                """INSERT INTO research_documents
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    document.id,
+                    document.title,
+                    document.media_type,
+                    document.source_uri,
+                    document.text,
+                    document.text_sha256,
+                    document.effective_at,
+                    document.known_at,
+                    document.recorded_at,
+                    document.source_artifact_id,
+                    document.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.ingest_text",
+                object_type="research_document",
+                object_id=document.id,
+                payload={
+                    "source_artifact_id": document.source_artifact_id,
+                    "import_batch_id": document.import_batch_id,
+                    "text_sha256": document.text_sha256,
+                },
+            )
+
+    def research_document(self, document_id: str) -> sqlite3.Row:
+        require_uuid(document_id, "document_id")
+        row = self.db.execute(
+            "SELECT * FROM research_documents WHERE id=?", (document_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown research document: {document_id}")
+        return row
+
+    def research_documents(self, query: str | None = None) -> list[sqlite3.Row]:
+        if query is None or not query.strip():
+            return self.db.execute(
+                "SELECT * FROM research_documents ORDER BY recorded_at,id"
+            ).fetchall()
+        pattern = f"%{query.strip().lower()}%"
+        return self.db.execute(
+            """SELECT * FROM research_documents
+               WHERE lower(title) LIKE ? OR lower(source_uri) LIKE ? OR lower(text) LIKE ?
+               ORDER BY recorded_at,id""",
+            (pattern, pattern, pattern),
+        ).fetchall()
+
+    def add_research_claim(self, claim: ResearchClaim) -> None:
+        self.research_document(claim.document_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO research_claims VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    claim.id,
+                    claim.document_id,
+                    claim.claim_key,
+                    claim.text,
+                    claim.span_start,
+                    claim.span_end,
+                    claim.generated_by,
+                    claim.confidence,
+                    claim.effective_at,
+                    claim.known_at,
+                    claim.recorded_at,
+                    claim.source_artifact_id,
+                    claim.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.create_claim",
+                object_type="research_claim",
+                object_id=claim.id,
+                payload={"document_id": claim.document_id, "claim_key": claim.claim_key},
+            )
+
+    def research_claim(self, claim_id: str) -> sqlite3.Row:
+        require_uuid(claim_id, "claim_id")
+        row = self.db.execute(
+            "SELECT * FROM research_claims WHERE id=?", (claim_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown research claim: {claim_id}")
+        return row
+
+    def research_claims(self, document_id: str) -> list[sqlite3.Row]:
+        self.research_document(document_id)
+        return self.db.execute(
+            "SELECT * FROM research_claims WHERE document_id=? ORDER BY claim_key,id",
+            (document_id,),
+        ).fetchall()
+
+    def all_research_claims(self) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM research_claims ORDER BY recorded_at,id"
+        ).fetchall()
+
+    def add_research_evidence(self, evidence: ResearchEvidence) -> None:
+        self.research_document(evidence.document_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO research_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    evidence.id,
+                    evidence.document_id,
+                    evidence.kind,
+                    evidence.text,
+                    evidence.span_start,
+                    evidence.span_end,
+                    evidence.relation,
+                    evidence.generated_by,
+                    evidence.confidence,
+                    evidence.effective_at,
+                    evidence.known_at,
+                    evidence.recorded_at,
+                    evidence.source_artifact_id,
+                    evidence.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.create_evidence",
+                object_type="research_evidence",
+                object_id=evidence.id,
+                payload={"document_id": evidence.document_id, "relation": evidence.relation},
+            )
+
+    def research_evidence(self, document_id: str) -> list[sqlite3.Row]:
+        self.research_document(document_id)
+        return self.db.execute(
+            "SELECT * FROM research_evidence WHERE document_id=? ORDER BY id",
+            (document_id,),
+        ).fetchall()
+
+    def all_research_evidence(self) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM research_evidence ORDER BY recorded_at,id"
+        ).fetchall()
+
+    def add_research_contradiction(
+        self, contradiction: ResearchContradiction
+    ) -> None:
+        for claim_id in (contradiction.claim_a_id, contradiction.claim_b_id):
+            if self.db.execute(
+                "SELECT 1 FROM research_claims WHERE id=?", (claim_id,)
+            ).fetchone() is None:
+                raise KeyError(f"unknown research claim: {claim_id}")
+        self._require_import_artifact(
+            contradiction.source_artifact_id, contradiction.import_batch_id
+        )
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO research_contradictions VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    contradiction.id,
+                    contradiction.claim_a_id,
+                    contradiction.claim_b_id,
+                    contradiction.kind,
+                    contradiction.explanation,
+                    contradiction.known_at,
+                    contradiction.recorded_at,
+                    contradiction.source_artifact_id,
+                    contradiction.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.create_contradiction",
+                object_type="research_contradiction",
+                object_id=contradiction.id,
+                payload={
+                    "claim_a_id": contradiction.claim_a_id,
+                    "claim_b_id": contradiction.claim_b_id,
+                    "kind": contradiction.kind,
+                },
+            )
+
+    def research_contradictions(self, claim_id: str) -> list[sqlite3.Row]:
+        require_uuid(claim_id, "claim_id")
+        return self.db.execute(
+            """SELECT * FROM research_contradictions
+               WHERE claim_a_id=? OR claim_b_id=?
+               ORDER BY recorded_at,id""",
+            (claim_id, claim_id),
+        ).fetchall()
+
+    def add_research_thesis(
+        self, thesis: ResearchThesis, revision: ThesisRevision
+    ) -> None:
+        if revision.thesis_id != thesis.id or revision.revision_number != 1:
+            raise ValueError("initial thesis revision must belong to thesis and be version one")
+        self._require_import_artifact(thesis.source_artifact_id, thesis.import_batch_id)
+        self._require_import_artifact(revision.source_artifact_id, revision.import_batch_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO research_theses VALUES(?,?,?,?,?)",
+                (
+                    thesis.id,
+                    thesis.title,
+                    thesis.created_at,
+                    thesis.source_artifact_id,
+                    thesis.import_batch_id,
+                ),
+            )
+            self.db.execute(
+                "INSERT INTO thesis_revisions VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    revision.id,
+                    revision.thesis_id,
+                    revision.revision_number,
+                    revision.text,
+                    revision.known_at,
+                    revision.recorded_at,
+                    revision.source_artifact_id,
+                    revision.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.create_thesis",
+                object_type="research_thesis",
+                object_id=thesis.id,
+                payload={"revision_number": revision.revision_number},
+            )
+
+    def add_thesis_revision(self, revision: ThesisRevision) -> None:
+        self.research_thesis(revision.thesis_id)
+        latest = self.db.execute(
+            "SELECT MAX(revision_number) AS number FROM thesis_revisions WHERE thesis_id=?",
+            (revision.thesis_id,),
+        ).fetchone()["number"]
+        if revision.revision_number != latest + 1:
+            raise ValueError("thesis revisions must be appended sequentially")
+        self._require_import_artifact(revision.source_artifact_id, revision.import_batch_id)
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO thesis_revisions VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    revision.id,
+                    revision.thesis_id,
+                    revision.revision_number,
+                    revision.text,
+                    revision.known_at,
+                    revision.recorded_at,
+                    revision.source_artifact_id,
+                    revision.import_batch_id,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.revise_thesis",
+                object_type="thesis_revision",
+                object_id=revision.id,
+                payload={
+                    "thesis_id": revision.thesis_id,
+                    "revision_number": revision.revision_number,
+                },
+            )
+
+    def research_thesis(self, thesis_id: str) -> sqlite3.Row:
+        require_uuid(thesis_id, "thesis_id")
+        row = self.db.execute(
+            "SELECT * FROM research_theses WHERE id=?", (thesis_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown research thesis: {thesis_id}")
+        return row
+
+    def research_theses(self) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM research_theses ORDER BY created_at,id"
+        ).fetchall()
+
+    def thesis_revisions(self, thesis_id: str) -> list[sqlite3.Row]:
+        self.research_thesis(thesis_id)
+        return self.db.execute(
+            "SELECT * FROM thesis_revisions WHERE thesis_id=? ORDER BY revision_number,id",
+            (thesis_id,),
+        ).fetchall()
+
+    def _research_node_exists(self, node_type: str, node_id: str) -> bool:
+        tables = {
+            "document": "research_documents",
+            "claim": "research_claims",
+            "evidence": "research_evidence",
+            "thesis": "research_theses",
+            "decision": "decisions",
+            "transaction": "transactions",
+        }
+        table = tables.get(node_type)
+        if table is None:
+            raise ValueError(f"unsupported research node type: {node_type}")
+        require_uuid(node_id, f"{node_type}_id")
+        return self.db.execute(f"SELECT 1 FROM {table} WHERE id=?", (node_id,)).fetchone() is not None
+
+    def add_research_link(self, link: ResearchLink) -> None:
+        if not self._research_node_exists(link.from_type, link.from_id):
+            raise KeyError(f"unknown research source node: {link.from_id}")
+        if not self._research_node_exists(link.to_type, link.to_id):
+            raise KeyError(f"unknown research target node: {link.to_id}")
+        self._require_import_artifact(link.source_artifact_id, link.import_batch_id)
+        with self.write_transaction():
+            self.db.execute(
+                """INSERT INTO research_links(
+                   id,from_type,from_id,to_type,to_id,relation,created_at,
+                   source_artifact_id,import_batch_id,effective_at,known_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    link.id,
+                    link.from_type,
+                    link.from_id,
+                    link.to_type,
+                    link.to_id,
+                    link.relation,
+                    link.created_at,
+                    link.source_artifact_id,
+                    link.import_batch_id,
+                    link.effective_at,
+                    link.known_at,
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="research.link",
+                object_type="research_link",
+                object_id=link.id,
+                payload={
+                    "from_type": link.from_type,
+                    "from_id": link.from_id,
+                    "to_type": link.to_type,
+                    "to_id": link.to_id,
+                    "relation": link.relation,
+                },
+            )
+
+    def research_links(self, node_type: str, node_id: str) -> list[sqlite3.Row]:
+        if not self._research_node_exists(node_type, node_id):
+            raise KeyError(f"unknown research node: {node_id}")
+        return self.db.execute(
+            """SELECT * FROM research_links
+               WHERE (from_type=? AND from_id=?) OR (to_type=? AND to_id=?)
+               ORDER BY created_at,id""",
+            (node_type, node_id, node_type, node_id),
+        ).fetchall()
+
+    def add_recommendation(
+        self,
+        recommendation: Recommendation,
+        alternatives: Iterable[RecommendationAlternative],
+    ) -> None:
+        self.portfolio(recommendation.portfolio_id)
+        self._require_import_artifact(
+            recommendation.source_artifact_id, recommendation.import_batch_id
+        )
+        rows = tuple(alternatives)
+        if any(row.recommendation_id != recommendation.id for row in rows):
+            raise ValueError("recommendation alternative belongs to another recommendation")
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO recommendations VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    recommendation.id,
+                    recommendation.portfolio_id,
+                    recommendation.subject,
+                    recommendation.recommendation_type,
+                    recommendation.rationale,
+                    recommendation.origin.value,
+                    recommendation.as_of,
+                    recommendation.known_as_of,
+                    recommendation.created_at,
+                    recommendation.payload_json,
+                    recommendation.source_artifact_id,
+                    recommendation.import_batch_id,
+                ),
+            )
+            self.db.executemany(
+                "INSERT INTO recommendation_alternatives VALUES(?,?,?,?,?)",
+                (
+                    (row.id, row.recommendation_id, row.key, row.description, int(row.selected))
+                    for row in rows
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="recommendation.create",
+                object_type="recommendation",
+                object_id=recommendation.id,
+                payload={"portfolio_id": recommendation.portfolio_id, "origin": recommendation.origin.value},
+            )
+
+    def recommendation(self, recommendation_id: str) -> sqlite3.Row:
+        require_uuid(recommendation_id, "recommendation_id")
+        row = self.db.execute(
+            """SELECT r.*,
+               COALESCE((
+                 SELECT status FROM recommendation_transitions t
+                 WHERE t.recommendation_id=r.id
+                 ORDER BY t.transitioned_at DESC,t.id DESC LIMIT 1
+               ), 'draft') AS status
+               FROM recommendations r WHERE r.id=?""",
+            (recommendation_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown recommendation: {recommendation_id}")
+        return row
+
+    def recommendation_alternatives(
+        self, recommendation_id: str
+    ) -> list[sqlite3.Row]:
+        self.recommendation(recommendation_id)
+        return self.db.execute(
+            """SELECT * FROM recommendation_alternatives
+               WHERE recommendation_id=? ORDER BY alternative_key,id""",
+            (recommendation_id,),
+        ).fetchall()
+
+    def transition_recommendation(self, recommendation_id: str, status: str) -> None:
+        current = self.recommendation(recommendation_id)
+        artifact_id, _ = self.virtual_artifact(
+            "manual://recommendation-transition",
+            json.dumps(
+                {"recommendation_id": recommendation_id, "status": status},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        batch_id = self.import_batch(
+            artifact_id,
+            adapter_name="manual-recommendation",
+            adapter_version="1",
+            schema_version="1",
+        )
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO recommendation_transitions VALUES(?,?,?,?,?,?)",
+                (new_id(), recommendation_id, status, now(), artifact_id, batch_id),
+            )
+            append_audit_event(
+                self.db,
+                operation="recommendation.transition",
+                object_type="recommendation",
+                object_id=recommendation_id,
+                payload={"from": current["status"], "to": status},
+            )
 
     def import_batch(
         self,

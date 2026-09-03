@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from .ports import LedgerRepository
+from .ports import CoreRepository
 
 from clausula.analytics import plan_fifo_transfer, replay_fifo
 
@@ -39,7 +39,7 @@ class ImportValidationError(ValueError):
 
 
 class LedgerService:
-    def __init__(self, repository: LedgerRepository):
+    def __init__(self, repository: CoreRepository):
         self.repository = repository
 
     def create_account(self, institution: str, name: str) -> str:
@@ -58,7 +58,7 @@ class LedgerService:
             InstrumentIdentifier(ticker, scheme), name, asset_type, currency
         )
 
-    def import_csv(self, account_id: str, path: str | Path) -> dict[str, str | int]:
+    def _import_csv_unscoped(self, account_id: str, path: str | Path) -> dict[str, str | int]:
         self.repository.require_account(account_id)
         artifact_id, digest = self.repository.artifact(path)
         batch_id = new_id()
@@ -107,6 +107,10 @@ class LedgerService:
             "transactions": inserted,
         }
 
+    def import_csv(self, account_id: str, path: str | Path) -> dict[str, str | int]:
+        with self.repository.write_transaction():
+            return self._import_csv_unscoped(account_id, path)
+
     def _transaction_from_csv_row(
         self,
         account_id: str,
@@ -118,7 +122,7 @@ class LedgerService:
     ) -> Transaction:
         transaction_type = (row.get("type") or "buy").strip().lower()
         effective_at = row.get("effective_at") or row.get("date") or recorded_at
-        known_at = row.get("known_at") or effective_at
+        known_at = row.get("known_at") or recorded_at
         currency = (row.get("currency") or "USD").strip().upper()
         ticker = (row.get("ticker") or row.get("instrument") or "CASH").strip()
         quantity = self._nonnegative(row.get("quantity"), "quantity")

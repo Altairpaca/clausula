@@ -1,11 +1,11 @@
 # Clausula Implementation Status
 
-- Snapshot date: 2026-08-19, Asia/Taipei
+- Snapshot date: 2026-08-26, Asia/Taipei
 - Repository: `/home/altair/projects/clausula`
 - Branch: `main`
-- Last frozen implementation: `feat: complete versioned investment policy vertical slice` (current `HEAD`)
-- Current phase: M6 Research and Evidence Graph
-- M4 Policy as Code, M4.5 Planning/Cash Allocation, and M5 Decision Intelligence are frozen.
+- Last frozen implementation: `f017c87 feat: add decision memory and reviews`
+- Current phase: M11 Recommendation and Attention implementation
+- M4 Policy as Code, M4.5 Planning/Cash Allocation, and M5.1 integrity remediation are frozen; M6 is in progress.
 
 ## Frozen Milestones
 
@@ -137,6 +137,37 @@ permission/confirmation/dry-run contracts cover the lifecycle. Transaction
 links never create or mutate Ledger facts.
 
 Accepted reference: `docs/adr/0007-decision-memory-and-review.md`.
+
+### M5.1 Integrity Remediation
+
+M5.1 closes the audit findings discovered after the M5 freeze: omitted ledger
+knowledge time no longer becomes the economic date, failed CSV imports roll back
+instrument creation, Decision policy and transaction links enforce Portfolio
+ownership, backup verification checks database-referenced raw members, Decision
+rebuild compares child semantics, zero-action policy simulation is explicit while
+planning hold scenarios remain valid, and non-boolean alternative selection is
+rejected. The regression suite covers these contracts.
+
+### M6 Research and Evidence Graph
+
+M6 local text graph is implemented: immutable text ingestion, source artifact
+provenance, source-spanned Claims and Evidence, explicit Contradictions, append-only
+Thesis revisions, typed graph links, deterministic temporal substring search, v9/v10
+schema migrations, canonical export/backup inclusion, clean rebuild mapping, CLI,
+SDK, Capability Registry, and acceptance tests. PDF parsing, web fetching and vector
+search remain outside this slice.
+
+M7 has a local-only HTTP projection in `clausula/api/http.py`. It serves capability
+discovery and structured POST execution with permission, confirmation and dry-run
+headers. It deliberately has no remote authentication or deployment contract yet.
+
+M9 has manifest validation and a capability-only in-process bridge in
+`clausula/plugins/`. Plugin isolation, package discovery, secrets, network scopes
+and crash containment remain deferred.
+
+M10 has a protocol-neutral MCP projection in `clausula/adapters/mcp.py` with
+research-read, portfolio-read, advisor and admin profiles. A concrete MCP SDK
+transport, token identity and invocation audit context remain deferred.
 
 ## Known Cross-Cutting Risks
 

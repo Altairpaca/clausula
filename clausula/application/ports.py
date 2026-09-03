@@ -30,6 +30,15 @@ from clausula.domain import (
     SecurityTransfer,
     Transaction,
     UnresolvedConstraint,
+    ResearchClaim,
+    ResearchContradiction,
+    ResearchDocument,
+    ResearchEvidence,
+    ResearchLink,
+    ResearchThesis,
+    ThesisRevision,
+    Recommendation,
+    RecommendationAlternative,
 )
 
 
@@ -134,6 +143,18 @@ class CoreRepository(LedgerRepository, Protocol):
     def integrity_check(self) -> str: ...
 
     def verify_audit_chain(self) -> dict[str, Any]: ...
+
+    def record_adapter_invocation(
+        self,
+        *,
+        adapter: str,
+        actor_type: str,
+        actor_id: str,
+        capability: str,
+        side_effect: str,
+        confirmed: bool,
+        succeeded: bool,
+    ) -> str: ...
 
     def export(self, destination: str | Path) -> str: ...
 
@@ -255,3 +276,63 @@ class CoreRepository(LedgerRepository, Protocol):
     def add_decision_review(self, review: DecisionReview) -> None: ...
 
     def decision_links(self, decision_id: str) -> Mapping[str, list[Mapping[str, Any]]]: ...
+
+    def add_research_document(self, document: ResearchDocument) -> None: ...
+
+    def research_document(self, document_id: str) -> Mapping[str, Any]: ...
+
+    def research_documents(self, query: str | None = None) -> list[Mapping[str, Any]]: ...
+
+    def add_research_claim(self, claim: ResearchClaim) -> None: ...
+
+    def research_claim(self, claim_id: str) -> Mapping[str, Any]: ...
+
+    def research_claims(self, document_id: str) -> list[Mapping[str, Any]]: ...
+
+    def all_research_claims(self) -> list[Mapping[str, Any]]: ...
+
+    def add_research_evidence(self, evidence: ResearchEvidence) -> None: ...
+
+    def research_evidence(self, document_id: str) -> list[Mapping[str, Any]]: ...
+
+    def all_research_evidence(self) -> list[Mapping[str, Any]]: ...
+
+    def add_research_contradiction(
+        self, contradiction: ResearchContradiction
+    ) -> None: ...
+
+    def research_contradictions(
+        self, claim_id: str
+    ) -> list[Mapping[str, Any]]: ...
+
+    def add_research_thesis(
+        self, thesis: ResearchThesis, revision: ThesisRevision
+    ) -> None: ...
+
+    def add_thesis_revision(self, revision: ThesisRevision) -> None: ...
+
+    def research_thesis(self, thesis_id: str) -> Mapping[str, Any]: ...
+
+    def research_theses(self) -> list[Mapping[str, Any]]: ...
+
+    def thesis_revisions(self, thesis_id: str) -> list[Mapping[str, Any]]: ...
+
+    def add_research_link(self, link: ResearchLink) -> None: ...
+
+    def research_links(
+        self, node_type: str, node_id: str
+    ) -> list[Mapping[str, Any]]: ...
+
+    def add_recommendation(
+        self,
+        recommendation: Recommendation,
+        alternatives: Iterable[RecommendationAlternative],
+    ) -> None: ...
+
+    def recommendation(self, recommendation_id: str) -> Mapping[str, Any]: ...
+
+    def recommendation_alternatives(
+        self, recommendation_id: str
+    ) -> list[Mapping[str, Any]]: ...
+
+    def transition_recommendation(self, recommendation_id: str, status: str) -> None: ...

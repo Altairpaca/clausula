@@ -4,9 +4,9 @@ from clausula import Store, LedgerService
 
 def fixture(path):
     with path.open("w", newline="") as f:
-        w=csv.DictWriter(f,fieldnames=["id","date","type","ticker","quantity","amount","fee"]); w.writeheader()
-        w.writerow({"id":"1","date":"2025-01-01T00:00:00+00:00","type":"buy","ticker":"ABC","quantity":"2","amount":"100","fee":"1"})
-        w.writerow({"id":"2","date":"2025-01-02T00:00:00+00:00","type":"sell","ticker":"ABC","quantity":"1","amount":"60","fee":"0"})
+        w=csv.DictWriter(f,fieldnames=["id","date","known_at","type","ticker","quantity","amount","fee"]); w.writeheader()
+        w.writerow({"id":"1","date":"2025-01-01T00:00:00+00:00","known_at":"2025-01-01T00:00:00+00:00","type":"buy","ticker":"ABC","quantity":"2","amount":"100","fee":"1"})
+        w.writerow({"id":"2","date":"2025-01-02T00:00:00+00:00","known_at":"2025-01-02T00:00:00+00:00","type":"sell","ticker":"ABC","quantity":"1","amount":"60","fee":"0"})
 
 def test_import_state_and_idempotence(tmp_path):
     svc=LedgerService(Store(tmp_path)); account=svc.create_account("broker","main"); path=tmp_path/"x.csv"; fixture(path)

@@ -487,6 +487,195 @@ CREATE TRIGGER decision_review_schedules_reject_delete BEFORE DELETE ON decision
 BEGIN SELECT RAISE(ABORT, 'decision_review_schedules is append-only'); END;
 """,
     ),
+    Migration(
+        9,
+        "research_evidence_graph",
+        """
+CREATE TABLE research_documents(
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    text TEXT NOT NULL,
+    text_sha256 TEXT NOT NULL,
+    effective_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE research_claims(
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES research_documents(id),
+    claim_key TEXT NOT NULL,
+    text TEXT NOT NULL,
+    span_start INTEGER NOT NULL CHECK(span_start >= 0),
+    span_end INTEGER NOT NULL CHECK(span_end > span_start),
+    generated_by TEXT NOT NULL,
+    confidence TEXT,
+    effective_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(document_id, claim_key)
+);
+CREATE TABLE research_evidence(
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES research_documents(id),
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    span_start INTEGER NOT NULL CHECK(span_start >= 0),
+    span_end INTEGER NOT NULL CHECK(span_end > span_start),
+    relation TEXT NOT NULL CHECK(relation IN ('supports','contradicts','context')),
+    generated_by TEXT NOT NULL,
+    confidence TEXT,
+    effective_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE research_contradictions(
+    id TEXT PRIMARY KEY,
+    claim_a_id TEXT NOT NULL REFERENCES research_claims(id),
+    claim_b_id TEXT NOT NULL REFERENCES research_claims(id),
+    kind TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(claim_a_id, claim_b_id, kind)
+);
+CREATE TABLE research_theses(
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE thesis_revisions(
+    id TEXT PRIMARY KEY,
+    thesis_id TEXT NOT NULL REFERENCES research_theses(id),
+    revision_number INTEGER NOT NULL CHECK(revision_number > 0),
+    text TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(thesis_id, revision_number)
+);
+CREATE TABLE research_links(
+    id TEXT PRIMARY KEY,
+    from_type TEXT NOT NULL,
+    from_id TEXT NOT NULL,
+    to_type TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(from_type, from_id, to_type, to_id, relation)
+);
+CREATE INDEX research_documents_search ON research_documents(title, source_uri);
+CREATE INDEX research_claims_document ON research_claims(document_id, claim_key);
+CREATE INDEX research_evidence_document ON research_evidence(document_id, id);
+CREATE INDEX research_contradictions_claims
+ON research_contradictions(claim_a_id, claim_b_id);
+CREATE INDEX thesis_revisions_order ON thesis_revisions(thesis_id, revision_number);
+CREATE INDEX research_links_from ON research_links(from_type, from_id);
+CREATE INDEX research_links_to ON research_links(to_type, to_id);
+CREATE TRIGGER research_documents_reject_update BEFORE UPDATE ON research_documents
+BEGIN SELECT RAISE(ABORT, 'research_documents is append-only'); END;
+CREATE TRIGGER research_documents_reject_delete BEFORE DELETE ON research_documents
+BEGIN SELECT RAISE(ABORT, 'research_documents is append-only'); END;
+CREATE TRIGGER research_claims_reject_update BEFORE UPDATE ON research_claims
+BEGIN SELECT RAISE(ABORT, 'research_claims is append-only'); END;
+CREATE TRIGGER research_claims_reject_delete BEFORE DELETE ON research_claims
+BEGIN SELECT RAISE(ABORT, 'research_claims is append-only'); END;
+CREATE TRIGGER research_evidence_reject_update BEFORE UPDATE ON research_evidence
+BEGIN SELECT RAISE(ABORT, 'research_evidence is append-only'); END;
+CREATE TRIGGER research_evidence_reject_delete BEFORE DELETE ON research_evidence
+BEGIN SELECT RAISE(ABORT, 'research_evidence is append-only'); END;
+CREATE TRIGGER research_contradictions_reject_update BEFORE UPDATE ON research_contradictions
+BEGIN SELECT RAISE(ABORT, 'research_contradictions is append-only'); END;
+CREATE TRIGGER research_contradictions_reject_delete BEFORE DELETE ON research_contradictions
+BEGIN SELECT RAISE(ABORT, 'research_contradictions is append-only'); END;
+CREATE TRIGGER research_theses_reject_update BEFORE UPDATE ON research_theses
+BEGIN SELECT RAISE(ABORT, 'research_theses is append-only'); END;
+CREATE TRIGGER research_theses_reject_delete BEFORE DELETE ON research_theses
+BEGIN SELECT RAISE(ABORT, 'research_theses is append-only'); END;
+CREATE TRIGGER thesis_revisions_reject_update BEFORE UPDATE ON thesis_revisions
+BEGIN SELECT RAISE(ABORT, 'thesis_revisions is append-only'); END;
+CREATE TRIGGER thesis_revisions_reject_delete BEFORE DELETE ON thesis_revisions
+BEGIN SELECT RAISE(ABORT, 'thesis_revisions is append-only'); END;
+CREATE TRIGGER research_links_reject_update BEFORE UPDATE ON research_links
+BEGIN SELECT RAISE(ABORT, 'research_links is append-only'); END;
+CREATE TRIGGER research_links_reject_delete BEFORE DELETE ON research_links
+BEGIN SELECT RAISE(ABORT, 'research_links is append-only'); END;
+""",
+    ),
+    Migration(
+        10,
+        "research_temporal_links",
+        """
+ALTER TABLE research_links ADD COLUMN effective_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00';
+ALTER TABLE research_links ADD COLUMN known_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00';
+""",
+    ),
+    Migration(
+        11,
+        "recommendation_lifecycle",
+        """
+CREATE TABLE recommendations(
+    id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL REFERENCES portfolios(id),
+    subject TEXT NOT NULL,
+    recommendation_type TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK(origin IN ('rule','agent')),
+    as_of TEXT NOT NULL,
+    known_as_of TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id)
+);
+CREATE TABLE recommendation_alternatives(
+    id TEXT PRIMARY KEY,
+    recommendation_id TEXT NOT NULL REFERENCES recommendations(id),
+    alternative_key TEXT NOT NULL,
+    description TEXT NOT NULL,
+    selected INTEGER NOT NULL CHECK(selected IN (0,1)),
+    UNIQUE(recommendation_id, alternative_key)
+);
+CREATE TABLE recommendation_transitions(
+    id TEXT PRIMARY KEY,
+    recommendation_id TEXT NOT NULL REFERENCES recommendations(id),
+    status TEXT NOT NULL CHECK(status IN ('reviewed','accepted','rejected','expired')),
+    transitioned_at TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    UNIQUE(recommendation_id, status)
+);
+CREATE INDEX recommendations_portfolio ON recommendations(portfolio_id, created_at, id);
+CREATE INDEX recommendation_transitions_lookup
+ON recommendation_transitions(recommendation_id, transitioned_at, id);
+CREATE TRIGGER recommendations_reject_update BEFORE UPDATE ON recommendations
+BEGIN SELECT RAISE(ABORT, 'recommendations is append-only'); END;
+CREATE TRIGGER recommendations_reject_delete BEFORE DELETE ON recommendations
+BEGIN SELECT RAISE(ABORT, 'recommendations is append-only'); END;
+CREATE TRIGGER recommendation_alternatives_reject_update BEFORE UPDATE ON recommendation_alternatives
+BEGIN SELECT RAISE(ABORT, 'recommendation_alternatives is append-only'); END;
+CREATE TRIGGER recommendation_alternatives_reject_delete BEFORE DELETE ON recommendation_alternatives
+BEGIN SELECT RAISE(ABORT, 'recommendation_alternatives is append-only'); END;
+CREATE TRIGGER recommendation_transitions_reject_update BEFORE UPDATE ON recommendation_transitions
+BEGIN SELECT RAISE(ABORT, 'recommendation_transitions is append-only'); END;
+CREATE TRIGGER recommendation_transitions_reject_delete BEFORE DELETE ON recommendation_transitions
+BEGIN SELECT RAISE(ABORT, 'recommendation_transitions is append-only'); END;
+""",
+    ),
 )
 
 

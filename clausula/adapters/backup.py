@@ -59,6 +59,16 @@ EXPORT_TABLES = (
     "decision_reviews",
     "decision_statements",
     "decision_review_schedules",
+    "research_documents",
+    "research_claims",
+    "research_evidence",
+    "research_contradictions",
+    "research_theses",
+    "thesis_revisions",
+    "research_links",
+    "recommendations",
+    "recommendation_alternatives",
+    "recommendation_transitions",
 )
 
 
@@ -213,6 +223,10 @@ def verify_backup_bundle(source: str | Path) -> dict[str, Any]:
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
                 audit = verify_audit_chain(connection)
                 schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+                artifact_hashes = {
+                    row["sha256"]
+                    for row in connection.execute("SELECT sha256 FROM artifacts")
+                } if _table_exists(connection, "artifacts") else set()
             if integrity != "ok":
                 raise ValueError(f"backup database integrity check failed: {integrity}")
             if not audit["valid"]:
@@ -221,6 +235,12 @@ def verify_backup_bundle(source: str | Path) -> dict[str, Any]:
                 raise ValueError("backup audit head does not match manifest")
             if schema_version != manifest["schema_version"]:
                 raise ValueError("backup schema version does not match manifest")
+            for digest in artifact_hashes:
+                name = f"raw/{digest}"
+                if name not in manifest["files"]:
+                    raise ValueError(f"backup is missing raw artifact: {digest}")
+                if sha256_bytes(archive.read(name)) != digest:
+                    raise ValueError(f"raw artifact filename/hash mismatch: {name}")
     return manifest | {"path": str(path), "sha256": sha256_bytes(path.read_bytes()), "valid": True}
 
 
@@ -239,6 +259,8 @@ def restore_backup_bundle(
                 continue
             digest = name.removeprefix("raw/")
             data = archive.read(name)
+            if sha256_bytes(data) != digest:
+                raise ValueError(f"raw artifact filename/hash mismatch: {name}")
             target = raw_root / digest
             if target.exists() and sha256_bytes(target.read_bytes()) != digest:
                 raise ValueError(f"existing raw artifact conflicts with backup: {digest}")

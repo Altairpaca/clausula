@@ -17,8 +17,8 @@ def test_manual_event_envelopes_rebuild_all_supported_operations(tmp_path):
     instrument_id = source_service.resolve_instrument("ABC", currency="USD")
     source_file = tmp_path / "trade.csv"
     source_file.write_text(
-        "id,date,type,ticker,quantity,amount,fee,currency\n"
-        "buy-1,2025-01-01,buy,ABC,2,20,0,USD\n",
+            "id,date,known_at,type,ticker,quantity,amount,fee,currency\n"
+            "buy-1,2025-01-01,2025-01-01,buy,ABC,2,20,0,USD\n",
         encoding="utf-8",
     )
     source_service.import_csv(source, source_file)

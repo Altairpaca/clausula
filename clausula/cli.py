@@ -184,6 +184,67 @@ def main(argv=None):
     decision_review.add_argument("--score", type=int)
     decision_review.add_argument("--reviewed-at")
 
+    research = subparsers.add_parser("research")
+    research_actions = research.add_subparsers(dest="action", required=True)
+    research_ingest = research_actions.add_parser("ingest-text")
+    research_ingest.add_argument("path")
+    research_ingest.add_argument("title")
+    research_ingest.add_argument("source_uri")
+    research_ingest.add_argument("--known-at", required=True)
+    research_ingest.add_argument("--effective-at")
+    research_ingest.add_argument("--media-type", default="text/plain")
+    research_document = research_actions.add_parser("document")
+    research_document.add_argument("document")
+    research_search = research_actions.add_parser("search")
+    research_search.add_argument("query")
+    research_search.add_argument("--as-of")
+    research_search.add_argument("--known-as-of")
+    research_claim = research_actions.add_parser("claim")
+    research_claim.add_argument("document")
+    research_claim.add_argument("claim_key")
+    research_claim.add_argument("text")
+    research_claim.add_argument("span_start", type=int)
+    research_claim.add_argument("span_end", type=int)
+    research_claim.add_argument("--known-at", required=True)
+    research_evidence = research_actions.add_parser("evidence")
+    research_evidence.add_argument("document")
+    research_evidence.add_argument("kind")
+    research_evidence.add_argument("text")
+    research_evidence.add_argument("span_start", type=int)
+    research_evidence.add_argument("span_end", type=int)
+    research_evidence.add_argument(
+        "relation", choices=("supports", "contradicts", "context")
+    )
+    research_evidence.add_argument("--known-at", required=True)
+    research_contradiction = research_actions.add_parser("contradiction")
+    research_contradiction.add_argument("claim_a")
+    research_contradiction.add_argument("claim_b")
+    research_contradiction.add_argument("kind")
+    research_contradiction.add_argument("explanation")
+    research_contradiction.add_argument("--known-at", required=True)
+    research_thesis = research_actions.add_parser("thesis-create")
+    research_thesis.add_argument("title")
+    research_thesis.add_argument("initial_text")
+    research_thesis.add_argument("--known-at", required=True)
+    research_revision = research_actions.add_parser("thesis-revise")
+    research_revision.add_argument("thesis")
+    research_revision.add_argument("text")
+    research_revision.add_argument("--known-at", required=True)
+    research_get_thesis = research_actions.add_parser("thesis")
+    research_get_thesis.add_argument("thesis")
+    research_link = research_actions.add_parser("link")
+    research_link.add_argument("from_type")
+    research_link.add_argument("from_id")
+    research_link.add_argument("to_type")
+    research_link.add_argument("to_id")
+    research_link.add_argument("relation")
+    research_link.add_argument("--known-at", required=True)
+    research_link.add_argument("--effective-at")
+    research_trace = research_actions.add_parser("trace")
+    research_trace.add_argument("node_type")
+    research_trace.add_argument("node_id")
+    research_trace.add_argument("--max-depth", type=int, default=3)
+
     system = subparsers.add_parser("system")
     system_actions = system.add_subparsers(dest="action", required=True)
     system_actions.add_parser("check")
@@ -443,6 +504,126 @@ def main(argv=None):
                 arguments["reviewed_at"] = args.reviewed_at
             permissions = {"decision:write"}
         output = registry.execute(capability, arguments, permissions=permissions, confirmed=True)
+    elif args.command == "research" and args.action == "ingest-text":
+        output = registry.execute(
+            "research.ingest_text",
+            {
+                "path": args.path,
+                "title": args.title,
+                "source_uri": args.source_uri,
+                "known_at": args.known_at,
+                "effective_at": args.effective_at,
+                "media_type": args.media_type,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "document":
+        output = registry.execute(
+            "research.get_document",
+            {"document_id": args.document},
+            permissions={"research:read"},
+        )
+    elif args.command == "research" and args.action == "search":
+        arguments = {"query": args.query}
+        if args.as_of is not None:
+            arguments["as_of"] = args.as_of
+        if args.known_as_of is not None:
+            arguments["known_as_of"] = args.known_as_of
+        output = registry.execute(
+            "research.search", arguments, permissions={"research:read"}
+        )
+    elif args.command == "research" and args.action == "claim":
+        output = registry.execute(
+            "research.add_claim",
+            {
+                "document_id": args.document,
+                "claim_key": args.claim_key,
+                "text": args.text,
+                "span_start": args.span_start,
+                "span_end": args.span_end,
+                "known_at": args.known_at,
+            },
+            permissions={"research:write", "research:read"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "evidence":
+        output = registry.execute(
+            "research.add_evidence",
+            {
+                "document_id": args.document,
+                "kind": args.kind,
+                "text": args.text,
+                "span_start": args.span_start,
+                "span_end": args.span_end,
+                "relation": args.relation,
+                "known_at": args.known_at,
+                "effective_at": args.effective_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "contradiction":
+        output = registry.execute(
+            "research.add_contradiction",
+            {
+                "claim_a_id": args.claim_a,
+                "claim_b_id": args.claim_b,
+                "kind": args.kind,
+                "explanation": args.explanation,
+                "known_at": args.known_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "thesis-create":
+        output = registry.execute(
+            "research.create_thesis",
+            {
+                "title": args.title,
+                "initial_text": args.initial_text,
+                "known_at": args.known_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "thesis-revise":
+        output = registry.execute(
+            "research.revise_thesis",
+            {"thesis_id": args.thesis, "text": args.text, "known_at": args.known_at},
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "thesis":
+        output = registry.execute(
+            "research.get_thesis",
+            {"thesis_id": args.thesis},
+            permissions={"research:read"},
+        )
+    elif args.command == "research" and args.action == "link":
+        output = registry.execute(
+            "research.link",
+            {
+                "from_type": args.from_type,
+                "from_id": args.from_id,
+                "to_type": args.to_type,
+                "to_id": args.to_id,
+                "relation": args.relation,
+                "known_at": args.known_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+    elif args.command == "research" and args.action == "trace":
+        output = registry.execute(
+            "research.trace",
+            {
+                "node_type": args.node_type,
+                "node_id": args.node_id,
+                "max_depth": args.max_depth,
+            },
+            permissions={"research:read"},
+        )
     elif args.command == "system" and args.action == "check":
         output = registry.execute(
             "system.check_integrity", permissions={"system:read"}

@@ -11,6 +11,8 @@ from clausula.application import (
     DecisionService,
     PolicyService,
     PortfolioService,
+    ResearchService,
+    RecommendationService,
 )
 
 from .registry import CapabilityRegistry, CapabilitySpec, SideEffect, object_schema
@@ -114,6 +116,8 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
     policies = PolicyService(repository)
     planning = PlanningService(repository)
     decisions = DecisionService(repository)
+    research = ResearchService(repository)
+    recommendations = RecommendationService(repository)
     registry = CapabilityRegistry()
     registry.register(
         CapabilitySpec(
@@ -870,6 +874,378 @@ def build_core_registry(repository: CoreRepository) -> CapabilityRegistry:
         lambda decision_id, review_type, notes, score=None, reviewed_at=None: {
             "review_id": decisions.review(decision_id, review_type, score, notes, reviewed_at=reviewed_at)
         },
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.ingest_text",
+            "Capture an immutable local text document with source provenance.",
+            object_schema(
+                {
+                    "path": STRING,
+                    "title": STRING,
+                    "source_uri": STRING,
+                    "known_at": STRING,
+                    "effective_at": NULLABLE_STRING,
+                    "recorded_at": NULLABLE_STRING,
+                    "media_type": STRING,
+                },
+                required=("path", "title", "source_uri", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Stores source bytes, provenance, immutable text, and an audit event.",
+        ),
+        lambda path, title, source_uri, known_at, effective_at=None, recorded_at=None, media_type="text/plain": research.ingest_text(
+            path,
+            title=title,
+            source_uri=source_uri,
+            known_at=known_at,
+            effective_at=effective_at,
+            recorded_at=recorded_at,
+            media_type=media_type,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.get_document",
+            "Read a research document and its claims, evidence, and links.",
+            object_schema({"document_id": STRING}, required=("document_id",)),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("research:read",),
+            False,
+            "Returns immutable document text and source provenance.",
+        ),
+        lambda document_id: research.get_document(document_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.add_claim",
+            "Append a source-spanned research claim.",
+            object_schema(
+                {
+                    "document_id": STRING,
+                    "claim_key": STRING,
+                    "text": STRING,
+                    "span_start": {"type": "integer"},
+                    "span_end": {"type": "integer"},
+                    "known_at": STRING,
+                    "generated_by": STRING,
+                    "confidence": NULLABLE_STRING,
+                },
+                required=("document_id", "claim_key", "text", "span_start", "span_end", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write", "research:read"),
+            True,
+            "Preserves source span and explicit knowledge time.",
+        ),
+        lambda document_id, claim_key, text, span_start, span_end, known_at, generated_by="human", confidence=None: research.create_claim(
+            document_id,
+            claim_key=claim_key,
+            text=text,
+            span_start=span_start,
+            span_end=span_end,
+            known_at=known_at,
+            generated_by=generated_by,
+            confidence=confidence,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.search",
+            "Search immutable research documents by deterministic substring matching.",
+            object_schema(
+                {
+                    "query": STRING,
+                    "as_of": NULLABLE_STRING,
+                    "known_as_of": NULLABLE_STRING,
+                },
+                required=("query",),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("research:read",),
+            False,
+            "Search ordering is deterministic and does not use vector ranking.",
+        ),
+        lambda query, as_of=None, known_as_of=None: research.search(
+            query, as_of=as_of, known_as_of=known_as_of
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.add_evidence",
+            "Append source evidence with a deterministic relation.",
+            object_schema(
+                {
+                    "document_id": STRING,
+                    "kind": STRING,
+                    "text": STRING,
+                    "span_start": {"type": "integer"},
+                    "span_end": {"type": "integer"},
+                    "relation": {"type": "string", "enum": ["supports", "contradicts", "context"]},
+                    "known_at": STRING,
+                    "generated_by": STRING,
+                    "confidence": NULLABLE_STRING,
+                },
+                required=("document_id", "kind", "text", "span_start", "span_end", "relation", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Preserves source span, relation, confidence, and knowledge time.",
+        ),
+        lambda document_id, kind, text, span_start, span_end, relation, known_at, generated_by="human", confidence=None: research.create_evidence(
+            document_id,
+            kind=kind,
+            text=text,
+            span_start=span_start,
+            span_end=span_end,
+            relation=relation,
+            known_at=known_at,
+            generated_by=generated_by,
+            confidence=confidence,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.add_contradiction",
+            "Record a contradiction while keeping both claims valid.",
+            object_schema(
+                {
+                    "claim_a_id": STRING,
+                    "claim_b_id": STRING,
+                    "kind": STRING,
+                    "explanation": STRING,
+                    "known_at": STRING,
+                },
+                required=("claim_a_id", "claim_b_id", "kind", "explanation", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Contradictions are append-only evidence relationships.",
+        ),
+        lambda claim_a_id, claim_b_id, kind, explanation, known_at: research.create_contradiction(
+            claim_a_id,
+            claim_b_id,
+            kind=kind,
+            explanation=explanation,
+            known_at=known_at,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.create_thesis",
+            "Create an immutable thesis with its first revision.",
+            object_schema(
+                {"title": STRING, "initial_text": STRING, "known_at": STRING},
+                required=("title", "initial_text", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Thesis revision one is created atomically and cannot be overwritten.",
+        ),
+        lambda title, initial_text, known_at: research.create_thesis(
+            title=title, initial_text=initial_text, known_at=known_at
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.revise_thesis",
+            "Append a new immutable thesis revision.",
+            object_schema(
+                {"thesis_id": STRING, "text": STRING, "known_at": STRING},
+                required=("thesis_id", "text", "known_at"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Revision numbers are sequential and prior text remains unchanged.",
+        ),
+        lambda thesis_id, text, known_at: research.revise_thesis(
+            thesis_id, text=text, known_at=known_at
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.get_thesis",
+            "Read a thesis, revisions, and graph links.",
+            object_schema({"thesis_id": STRING}, required=("thesis_id",)),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("research:read",),
+            False,
+            "Returns full immutable revision history.",
+        ),
+        lambda thesis_id: research.get_thesis(thesis_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.link",
+            "Append a typed relationship between research and canonical nodes.",
+            object_schema(
+                {
+                    "from_type": STRING,
+                    "from_id": STRING,
+                    "to_type": STRING,
+                    "to_id": STRING,
+                    "relation": STRING,
+                    "effective_at": NULLABLE_STRING,
+                    "known_at": STRING,
+                },
+                required=("from_type", "from_id", "to_type", "to_id", "relation", "known_at"),
+            ),
+            object_schema({"link_id": STRING}, required=("link_id",)),
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("research:write",),
+            True,
+            "Endpoint existence is validated before the append-only link is written.",
+        ),
+        lambda from_type, from_id, to_type, to_id, relation, known_at, effective_at=None: {
+            "link_id": research.link(
+                from_type,
+                from_id,
+                to_type,
+                to_id,
+                relation=relation,
+                known_at=known_at,
+                effective_at=effective_at,
+            )
+        },
+    )
+    registry.register(
+        CapabilitySpec(
+            "research.trace",
+            "Trace deterministic bidirectional research graph neighbors.",
+            object_schema(
+                {"node_type": STRING, "node_id": STRING, "max_depth": {"type": "integer"}},
+                required=("node_type", "node_id"),
+            ),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("research:read",),
+            False,
+            "Returns stable node and link records without vector ranking.",
+        ),
+        lambda node_type, node_id, max_depth=3: research.trace(
+            node_type, node_id, max_depth=max_depth
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "recommendation.create",
+            "Create a structured recommendation draft without creating a transaction.",
+            object_schema(
+                {
+                    "portfolio_id": STRING,
+                    "subject": STRING,
+                    "recommendation_type": STRING,
+                    "rationale": STRING,
+                    "as_of": STRING,
+                    "known_as_of": STRING,
+                    "origin": {"type": "string", "enum": ["rule", "agent"]},
+                    "alternatives": {"type": "array"},
+                },
+                required=(
+                    "portfolio_id",
+                    "subject",
+                    "recommendation_type",
+                    "rationale",
+                    "as_of",
+                    "known_as_of",
+                ),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("recommendation:create",),
+            True,
+            "Creates a DRAFT recommendation with facts and alternatives as structured data.",
+        ),
+        lambda portfolio_id, subject, recommendation_type, rationale, as_of, known_as_of, origin="rule", alternatives=(): recommendations.create(
+            portfolio_id=portfolio_id,
+            subject=subject,
+            recommendation_type=recommendation_type,
+            rationale=rationale,
+            as_of=as_of,
+            known_as_of=known_as_of,
+            origin=origin,
+            alternatives=alternatives,
+        ),
+    )
+    registry.register(
+        CapabilitySpec(
+            "recommendation.get",
+            "Read a recommendation draft and immutable alternatives.",
+            object_schema({"recommendation_id": STRING}, required=("recommendation_id",)),
+            {"type": "object"},
+            "read",
+            True,
+            SideEffect.LOCAL_READ,
+            ("recommendation:read",),
+            False,
+            "Returns the current derived lifecycle status and original payload.",
+        ),
+        lambda recommendation_id: recommendations.get(recommendation_id),
+    )
+    registry.register(
+        CapabilitySpec(
+            "recommendation.transition",
+            "Append a valid recommendation lifecycle transition.",
+            object_schema(
+                {
+                    "recommendation_id": STRING,
+                    "status": {
+                        "type": "string",
+                        "enum": ["reviewed", "accepted", "rejected", "expired"],
+                    },
+                },
+                required=("recommendation_id", "status"),
+            ),
+            {"type": "object"},
+            "write",
+            True,
+            SideEffect.LOCAL_WRITE,
+            ("recommendation:write",),
+            True,
+            "Lifecycle transitions are append-only and never create transactions.",
+        ),
+        lambda recommendation_id, status: recommendations.transition(
+            recommendation_id, status
+        ),
     )
 
     system_methods = {

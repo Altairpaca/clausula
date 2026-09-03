@@ -15,11 +15,11 @@ def test_rebuild_csv_raw_imports_into_empty_database_and_reconciles(tmp_path):
     with source.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=["id", "date", "type", "ticker", "quantity", "amount", "fee", "currency"],
+            fieldnames=["id", "date", "known_at", "type", "ticker", "quantity", "amount", "fee", "currency"],
         )
         writer.writeheader()
         writer.writerow(
-            {"id": "1", "date": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "2", "amount": "100", "fee": "1", "currency": "USD"}
+            {"id": "1", "date": "2025-01-01", "known_at": "2025-01-01", "type": "buy", "ticker": "ABC", "quantity": "2", "amount": "100", "fee": "1", "currency": "USD"}
         )
     source_service.import_csv(account_id, source)
 

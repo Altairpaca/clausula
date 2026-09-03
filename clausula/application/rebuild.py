@@ -10,6 +10,7 @@ from .ledger import MANUAL_EVENT_FORMAT, LedgerService
 from .market import MarketService
 from .planning import PLANNING_EVENT_FORMAT, PlanningService
 from .decision import DECISION_EVENT_FORMAT, DecisionService
+from .research import RESEARCH_EVENT_FORMAT, ResearchService
 from .policy import POLICY_EVENT_FORMAT, PolicyService
 from .portfolio import PORTFOLIO_EVENT_FORMAT, PortfolioService
 from .ports import CoreRepository
@@ -35,6 +36,8 @@ class LedgerRebuilder:
             or target_catalog.get("policies")
             or target_catalog.get("plans")
             or target_catalog.get("decisions")
+            or target_catalog.get("research", {}).get("documents")
+            or target_catalog.get("research", {}).get("theses")
             or target_catalog["imports"]
         ):
             raise RebuildError("target repository must be empty")
@@ -44,6 +47,7 @@ class LedgerRebuilder:
         target_policies = PolicyService(self.target)
         target_planning = PlanningService(self.target)
         target_decisions = DecisionService(self.target)
+        target_research = ResearchService(self.target)
         account_mapping: dict[str, str] = {}
         transaction_mapping: dict[str, str] = {}
         instrument_mapping: dict[str, str] = {}
@@ -54,6 +58,10 @@ class LedgerRebuilder:
         plan_mapping: dict[str, str] = {}
         plan_scenario_mapping: dict[str, str] = {}
         decision_mapping: dict[str, str] = {}
+        research_mapping: dict[str, str] = {}
+        artifact_paths = {
+            batch["sha256"]: Path(batch["raw_path"]) for batch in catalog["imports"]
+        }
         for account in catalog["accounts"]:
             account_mapping[account["id"]] = target_service.create_account(
                 account["institution"], account["name"]
@@ -130,6 +138,8 @@ class LedgerRebuilder:
                     }
                 )
                 continue
+            if batch["adapter_name"] == "text-source":
+                continue
             if batch["adapter_name"] == "manual":
                 if batch["inserted_rows"]:
                     warnings.append(
@@ -150,6 +160,7 @@ class LedgerRebuilder:
                     POLICY_EVENT_FORMAT,
                     PLANNING_EVENT_FORMAT,
                     DECISION_EVENT_FORMAT,
+                    RESEARCH_EVENT_FORMAT,
                 }:
                     raise ValueError("unknown manual event format")
                 if event["format"] == POLICY_EVENT_FORMAT:
@@ -180,6 +191,13 @@ class LedgerRebuilder:
                         plan_mapping,
                         transaction_mapping,
                         decision_mapping,
+                    )
+                elif event["format"] == RESEARCH_EVENT_FORMAT:
+                    result = self._replay_research_event(
+                        target_research,
+                        event,
+                        artifact_paths,
+                        research_mapping,
                     )
                 else:
                     result = self._replay_manual_event(
@@ -407,14 +425,114 @@ class LedgerRebuilder:
                     and td["as_of"] == source_decision["as_of"]
                     and td["known_as_of"] == source_decision["known_as_of"]
                     and td["created_at"] == source_decision["created_at"]
+                    and td["policy_version_id"] == (
+                        None
+                        if source_decision["policy_version_id"] is None
+                        else policy_version_mapping[source_decision["policy_version_id"]]
+                    )
+                    and td["plan_id"] == (
+                        None
+                        if source_decision["plan_id"] is None
+                        else plan_mapping[source_decision["plan_id"]]
+                    )
                 )
                 source_alternatives = self._planning_semantic(source_entry["alternatives"])
                 target_alternatives = self._planning_semantic(target_entry["alternatives"])
                 matches = matches and source_alternatives == target_alternatives
-                matches = matches and len(source_entry["policy_links"]) == len(target_entry["policy_links"])
-                matches = matches and len(source_entry["evidence_links"]) == len(target_entry["evidence_links"])
-                matches = matches and len(source_entry["transaction_links"]) == len(target_entry["transaction_links"])
-                matches = matches and len(source_entry["reviews"]) == len(target_entry["reviews"])
+                source_policy_links = sorted(
+                    (
+                        row["policy_version_id"],
+                        row["link_type"],
+                    )
+                    for row in source_entry["policy_links"]
+                )
+                inverse_policy_version_mapping = {
+                    target_value: source_value
+                    for source_value, target_value in policy_version_mapping.items()
+                }
+                target_policy_links = sorted(
+                    (
+                        inverse_policy_version_mapping[row["policy_version_id"]],
+                        row["link_type"],
+                    )
+                    for row in target_entry["policy_links"]
+                )
+                matches = matches and source_policy_links == target_policy_links
+                source_evidence_links = sorted(
+                    (
+                        row["evidence_id"],
+                        row["evidence_kind"],
+                        row["relation"],
+                    )
+                    for row in source_entry["evidence_links"]
+                )
+                target_evidence_links = sorted(
+                    (
+                        row["evidence_id"],
+                        row["evidence_kind"],
+                        row["relation"],
+                    )
+                    for row in target_entry["evidence_links"]
+                )
+                matches = matches and source_evidence_links == target_evidence_links
+                source_transaction_links = sorted(
+                    (
+                        row["transaction_id"],
+                        row["relation"],
+                        row["linked_at"],
+                    )
+                    for row in source_entry["transaction_links"]
+                )
+                inverse_transaction_mapping = {
+                    target_value: source_value
+                    for source_value, target_value in transaction_mapping.items()
+                }
+                target_transaction_links = sorted(
+                    (
+                        inverse_transaction_mapping[row["transaction_id"]],
+                        row["relation"],
+                        row["linked_at"],
+                    )
+                    for row in target_entry["transaction_links"]
+                )
+                matches = matches and source_transaction_links == target_transaction_links
+                source_reviews = sorted(
+                    (
+                        row["review_type"],
+                        row["score"],
+                        row["notes"],
+                        row["reviewed_at"],
+                    )
+                    for row in source_entry["reviews"]
+                )
+                target_reviews = sorted(
+                    (
+                        row["review_type"],
+                        row["score"],
+                        row["notes"],
+                        row["reviewed_at"],
+                    )
+                    for row in target_entry["reviews"]
+                )
+                matches = matches and source_reviews == target_reviews
+                source_statements = sorted(
+                    (row["kind"], row["statement_key"], row["text"])
+                    for row in source_entry["statements"]
+                )
+                target_statements = sorted(
+                    (row["kind"], row["statement_key"], row["text"])
+                    for row in target_entry["statements"]
+                )
+                matches = matches and source_statements == target_statements
+                source_schedule = sorted(
+                    (row["review_type"], row["due_at"])
+                    for row in source_entry["review_schedules"]
+                )
+                target_schedule = sorted(
+                    (row["review_type"], row["due_at"])
+                    for row in target_entry["review_schedule"]
+                )
+                matches = matches and source_schedule == target_schedule
             consistent = consistent and matches
             decision_comparisons.append(
                 {
@@ -425,6 +543,89 @@ class LedgerRebuilder:
                     "target": target_entry,
                 }
             )
+        research_comparisons = []
+        source_research = catalog.get("research", {})
+        target_research_catalog = self.target.rebuild_catalog().get("research", {})
+
+        def semantic_rows(
+            rows: list[dict[str, Any]],
+            *,
+            foreign_mapping: dict[str, str] | None = None,
+        ) -> list[dict[str, Any]]:
+            mapped = foreign_mapping or {}
+            result = []
+            for row in rows:
+                result.append(
+                    {
+                        key: mapped.get(value, value)
+                        if key.endswith("_id") and isinstance(value, str)
+                        else value
+                        for key, value in row.items()
+                        if key not in {"id", "source_artifact_id", "import_batch_id"}
+                    }
+                )
+            return sorted(result, key=lambda item: json.dumps(item, sort_keys=True))
+
+        target_documents = {
+            research_mapping.get(item["id"], item["id"]): item
+            for item in target_research_catalog.get("documents", [])
+        }
+        for source_document in source_research.get("documents", []):
+            target_document = target_documents.get(
+                research_mapping.get(source_document["id"])
+            )
+            matches = target_document is not None
+            if target_document is not None:
+                matches = semantic_rows(
+                    [source_document],
+                    foreign_mapping=research_mapping,
+                ) == semantic_rows([target_document], foreign_mapping={})
+            consistent = consistent and matches
+            research_comparisons.append(
+                {
+                    "kind": "document",
+                    "source_id": source_document["id"],
+                    "target_id": None if target_document is None else target_document["id"],
+                    "matches": matches,
+                }
+            )
+        for kind in ("claims", "evidence", "contradictions", "links"):
+            source_rows = source_research.get(kind, [])
+            target_rows = target_research_catalog.get(kind, [])
+            source_semantic = semantic_rows(
+                source_rows, foreign_mapping=research_mapping
+            )
+            target_semantic = semantic_rows(target_rows)
+            matches = source_semantic == target_semantic
+            consistent = consistent and matches
+            research_comparisons.append(
+                {
+                    "kind": kind,
+                    "source_count": len(source_rows),
+                    "target_count": len(target_rows),
+                    "matches": matches,
+                }
+            )
+        source_theses = [
+            item["thesis"] | {"revisions": item["revisions"]}
+            for item in source_research.get("theses", [])
+        ]
+        target_theses = [
+            item["thesis"] | {"revisions": item["revisions"]}
+            for item in target_research_catalog.get("theses", [])
+        ]
+        matches = semantic_rows(
+            source_theses, foreign_mapping=research_mapping
+        ) == semantic_rows(target_theses)
+        consistent = consistent and matches
+        research_comparisons.append(
+            {
+                "kind": "theses",
+                "source_count": len(source_theses),
+                "target_count": len(target_theses),
+                "matches": matches,
+            }
+        )
         return {
             "consistent": consistent and not warnings,
             "account_mapping": account_mapping,
@@ -437,12 +638,14 @@ class LedgerRebuilder:
             "plan_mapping": plan_mapping,
             "plan_scenario_mapping": plan_scenario_mapping,
             "decision_mapping": decision_mapping,
+            "research_mapping": research_mapping,
             "replayed_imports": replayed,
             "comparisons": comparisons,
             "portfolio_comparisons": portfolio_comparisons,
             "policy_comparisons": policy_comparisons,
             "plan_comparisons": plan_comparisons,
             "decision_comparisons": decision_comparisons,
+            "research_comparisons": research_comparisons,
             "warnings": warnings,
         }
 
@@ -477,6 +680,112 @@ class LedgerRebuilder:
             {key: value for key, value in definition.items() if key != "id"}
             for definition in event["rules"]
         ]
+
+    def _replay_research_event(
+        self,
+        research: ResearchService,
+        event: dict[str, Any],
+        artifact_paths: dict[str, Path],
+        mapping: dict[str, str],
+    ) -> dict[str, Any]:
+        operation = event["operation"]
+        if event.get("schema_version") != "1":
+            raise ValueError("unsupported research event schema")
+        if operation == "research.ingest_text":
+            source_path = artifact_paths.get(event.get("source_artifact_sha256", ""))
+            if source_path is None:
+                raise RebuildError("research source artifact is missing")
+            result = research.ingest_text(
+                source_path,
+                title=event["title"],
+                source_uri=event["source_uri"],
+                known_at=event["known_at"],
+                effective_at=event["effective_at"],
+                recorded_at=event["recorded_at"],
+                media_type=event["media_type"],
+            )
+            if result["document"]["text_sha256"] != event["text_sha256"]:
+                raise RebuildError("research document text changed during rebuild")
+            mapping[event["document_id"]] = result["document"]["id"]
+            return result
+        if operation == "research.create_claim":
+            result = research.create_claim(
+                mapping[event["document_id"]],
+                claim_key=event["claim_key"],
+                text=event["text"],
+                span_start=event["span_start"],
+                span_end=event["span_end"],
+                known_at=event["known_at"],
+                effective_at=event["effective_at"],
+                recorded_at=event["recorded_at"],
+                generated_by=event["generated_by"],
+                confidence=event["confidence"],
+            )
+            mapping[event["item_id"]] = result["claim"]["id"]
+            return result
+        if operation == "research.create_evidence":
+            result = research.create_evidence(
+                mapping[event["document_id"]],
+                kind=event["kind"],
+                text=event["text"],
+                span_start=event["span_start"],
+                span_end=event["span_end"],
+                relation=event["relation"],
+                known_at=event["known_at"],
+                generated_by=event["generated_by"],
+                confidence=event["confidence"],
+                effective_at=event["effective_at"],
+                recorded_at=event["recorded_at"],
+            )
+            mapping[event["item_id"]] = result["evidence"]["id"]
+            return result
+        if operation == "research.create_contradiction":
+            result = research.create_contradiction(
+                mapping[event["claim_a_id"]],
+                mapping[event["claim_b_id"]],
+                kind=event["kind"],
+                explanation=event["explanation"],
+                known_at=event["known_at"],
+                recorded_at=event["recorded_at"],
+            )
+            mapping[event["contradiction_id"]] = result["contradiction"]["id"]
+            return result
+        if operation == "research.create_thesis":
+            result = research.create_thesis(
+                title=event["title"],
+                initial_text=event["initial_text"],
+                known_at=event["known_at"],
+                created_at=event["created_at"],
+                recorded_at=event["recorded_at"],
+            )
+            mapping[event["thesis_id"]] = result["thesis"]["id"]
+            mapping[event["revision_id"]] = result["revisions"][0]["id"]
+            return result
+        if operation == "research.revise_thesis":
+            result = research.revise_thesis(
+                mapping[event["thesis_id"]],
+                text=event["text"],
+                known_at=event["known_at"],
+                recorded_at=event["recorded_at"],
+            )
+            mapping[event["revision_id"]] = result["revision"]["id"]
+            return result
+        if operation == "research.link":
+            from_id = mapping.get(event["from_id"], event["from_id"])
+            to_id = mapping.get(event["to_id"], event["to_id"])
+            link_id = research.link(
+                event["from_type"],
+                from_id,
+                event["to_type"],
+                to_id,
+                relation=event["relation"],
+                known_at=event["known_at"],
+                effective_at=event["effective_at"],
+                recorded_at=event["recorded_at"],
+            )
+            mapping[event["link_id"]] = link_id
+            return {"link_id": link_id}
+        raise ValueError(f"unsupported research operation: {operation}")
 
     def _replay_policy_event(
         self,

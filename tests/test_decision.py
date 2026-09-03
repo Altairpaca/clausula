@@ -161,7 +161,7 @@ def test_decision_backup_and_clean_rebuild_preserve_lifecycle(tmp_path):
     decisions.review(created["decision"]["id"], "process", 4, "Clear rationale.", reviewed_at="2025-02-01")
 
     bundle = tmp_path / "decisions.zip"
-    assert source.backup_bundle(bundle)["schema_version"] == 8
+    assert source.backup_bundle(bundle)["schema_version"] == 11
     restored = Store(tmp_path / "restored")
     restored.restore_bundle(bundle)
     assert restored.decision(created["decision"]["id"])["title"] == "Rebuildable"
