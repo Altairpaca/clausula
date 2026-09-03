@@ -7,6 +7,9 @@ dist/
 build/
 *.egg-info/
 .venv/
+.omo/
+.opencode/
+.codegraph/
 
 # Runtime financial data never belongs in the repository.
 .clausula/
