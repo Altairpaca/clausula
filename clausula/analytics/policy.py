@@ -226,6 +226,8 @@ def simulate_base_currency_trades(
 ) -> dict[str, Any]:
     if valuation.get("complete") is not True:
         raise PolicyEvaluationError("policy simulation requires a complete valuation")
+    if not actions:
+        raise PolicyEvaluationError("simulation requires at least one action")
     base_currency = str(valuation["base_currency"]).upper()
     total = dec(valuation["total_value"])
     allocation = {

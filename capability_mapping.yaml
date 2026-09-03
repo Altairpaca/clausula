@@ -1,5 +1,5 @@
-version: 8
-status: m5_decision_intelligence_implemented
+version: 10
+status: m6_research_text_graph_in_progress
 mappings:
   - legacy: data.pipeline.adapters.SourceAdapter
     disposition: MIGRATE_WITH_REWRITE
@@ -97,6 +97,19 @@ canonical_m5:
   - decision.link_transaction
   - decision.review
 
+canonical_m6:
+  - research.ingest_text
+  - research.get_document
+  - research.add_claim
+  - research.add_evidence
+  - research.add_contradiction
+  - research.create_thesis
+  - research.revise_thesis
+  - research.get_thesis
+  - research.search
+  - research.link
+  - research.trace
+
 implementation_status:
   account.create: implemented
   instrument.resolve: implemented_basic_identifier_registry
@@ -137,6 +150,16 @@ implementation_status:
   decision.link_evidence: implemented_append_only
   decision.link_transaction: implemented_append_only_no_ledger_write
   decision.review: implemented_process_outcome_separation
+  research.ingest_text: implemented_immutable_local_text
+  research.get_document: implemented
+  research.add_claim: implemented_source_spanned
+  research.add_evidence: implemented_source_spanned
+  research.add_contradiction: implemented_append_only
+  research.create_thesis: implemented_revision_one
+  research.revise_thesis: implemented_append_only
+  research.get_thesis: implemented
+  research.search: implemented_deterministic_substring
+  research.link: implemented_typed_endpoint_validation
 
 platform_contract:
   registry: implemented
@@ -146,5 +169,7 @@ platform_contract:
   dry_run: implemented
   cli_projection: implemented
   python_projection: implemented
-  http_projection: pending_m7
-  mcp_projection: pending_m10
+  http_projection: implemented_local_registry_projection
+  mcp_projection: implemented_protocol_neutral_profiles
+  mcp_sdk_transport: pending_m10
+  mcp_invocation_audit_identity: pending_m10

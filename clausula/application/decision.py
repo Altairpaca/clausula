@@ -56,6 +56,9 @@ class DecisionService:
         knowledge = canonical_timestamp(known_as_of or as_of)
         if policy_version_id is not None:
             version = self.repository.policy_version(policy_version_id)
+            policy = self.repository.policy(version["policy_id"])
+            if policy["portfolio_id"] != portfolio_id:
+                raise DecisionError("policy version belongs to a different portfolio")
             if version["effective_from"] > effective or version["known_at"] > knowledge:
                 raise DecisionError("policy version was not effective and knowable at decision time")
         if plan_id is not None:
@@ -244,12 +247,15 @@ class DecisionService:
             key = str(item.get("key", "")).strip()
             if not key or key in seen:
                 raise DecisionError("alternative keys must be non-empty and unique")
+            selected = item.get("selected", False)
+            if not isinstance(selected, bool):
+                raise DecisionError("alternative selected must be boolean")
             seen.add(key)
             normalized.append(
                 {
                     "key": key,
                     "description": str(item.get("description", "")).strip(),
-                    "selected": bool(item.get("selected", False)),
+                    "selected": selected,
                 }
             )
         return normalized

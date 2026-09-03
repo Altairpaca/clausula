@@ -22,6 +22,12 @@ from clausula.capabilities import (
 
 
 def write_rows(path: Path, fields: list[str], rows: list[dict]) -> None:
+    if "known_at" not in fields:
+        fields = [*fields[:2], "known_at", *fields[2:]]
+        rows = [
+            {**row, "known_at": row.get("date") or row.get("effective_at") or "2025-01-01"}
+            for row in rows
+        ]
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
@@ -380,7 +386,7 @@ def test_policy_backup_round_trip_includes_v6_tables(tmp_path):
     )
     bundle = tmp_path / "policy.zip"
     manifest = store.backup_bundle(bundle)
-    assert manifest["schema_version"] == 8
+    assert manifest["schema_version"] == 11
     assert store.verify_backup(bundle)["valid"] is True
     export = tmp_path / "export.jsonl"
     store.export(export)

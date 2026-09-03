@@ -36,6 +36,16 @@ def test_capability_specs_are_complete_and_discoverable(tmp_path):
         "system.backup",
         "system.check_integrity",
         "system.export",
+        "research.ingest_text",
+        "research.get_document",
+        "research.add_claim",
+        "research.add_evidence",
+        "research.add_contradiction",
+        "research.create_thesis",
+        "research.revise_thesis",
+        "research.get_thesis",
+        "research.search",
+        "research.link",
     } <= set(names)
     for item in descriptions:
         assert item["input_schema"]["type"] == "object"
@@ -107,8 +117,8 @@ def test_market_portfolio_cli_and_sdk_project_the_same_capabilities(
     monkeypatch.setenv("CLAUSULA_HOME", str(home))
     source = tmp_path / "ledger.csv"
     source.write_text(
-        "id,date,type,ticker,quantity,amount,fee,currency\n"
-        "cash,2025-01-01,deposit,CASH,0,100,0,USD\n",
+        "id,date,known_at,type,ticker,quantity,amount,fee,currency\n"
+        "cash,2025-01-01,2025-01-01,deposit,CASH,0,100,0,USD\n",
         encoding="utf-8",
     )
     prices = tmp_path / "prices.csv"
@@ -156,3 +166,34 @@ def test_market_portfolio_cli_and_sdk_project_the_same_capabilities(
     assert client.market_datasets("daily")[0]["version"] == "v1"
     assert client.portfolio_valuation(portfolio_id, "2025-01-02") == cli_valuation
     assert cli_valuation["total_value"] == "100"
+
+
+def test_research_capabilities_and_sdk_project_the_same_contract(
+    tmp_path, monkeypatch, capsys
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLAUSULA_HOME", str(home))
+    source = tmp_path / "note.txt"
+    source.write_text("Cash is a deliberate option.", encoding="utf-8")
+
+    client = ClausulaClient(home)
+    document = client.ingest_research_text(
+        str(source),
+        "Cash note",
+        "file:///cash-note",
+        "2026-01-01",
+        recorded_at="2026-01-01",
+    )
+    document_id = document["document"]["id"]
+    claim = client.add_research_claim(
+        document_id,
+        "cash-option",
+        "Cash is a deliberate option.",
+        0,
+        29,
+        "2026-01-01",
+    )
+    assert client.search_research("deliberate")["claims"][0]["id"] == claim["claim"]["id"]
+    assert main(["research", "document", document_id]) == 0
+    cli_document = json.loads(capsys.readouterr().out)
+    assert cli_document["document"]["id"] == document_id

@@ -233,3 +233,5 @@ def test_policy_simulation_rejects_unsafe_or_unavailable_inputs():
             [{"instrument_id": instrument_id, "base_value_delta": "1"}],
             instruments,
         )
+    with pytest.raises(PolicyEvaluationError, match="at least one action"):
+        simulate_base_currency_trades(current, [], instruments)

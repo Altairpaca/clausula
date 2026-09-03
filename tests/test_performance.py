@@ -10,6 +10,12 @@ from decimal import Decimal
 
 
 def write_rows(path: Path, fields: list[str], rows: list[dict]) -> None:
+    if "known_at" not in fields:
+        fields = [*fields[:2], "known_at", *fields[2:]]
+        rows = [
+            {**row, "known_at": row.get("date") or row.get("effective_at") or "2025-01-01"}
+            for row in rows
+        ]
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()

@@ -223,6 +223,126 @@ class ClausulaClient:
             permissions={"decision:write"},
             confirmed=True,
         )
+
+    def ingest_research_text(self, path, title, source_uri, known_at, **options):
+        return self.invoke(
+            "research.ingest_text",
+            {
+                "path": path,
+                "title": title,
+                "source_uri": source_uri,
+                "known_at": known_at,
+                **options,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
+    def add_research_claim(self, document_id, claim_key, text, span_start, span_end, known_at, **options):
+        return self.invoke(
+            "research.add_claim",
+            {
+                "document_id": document_id,
+                "claim_key": claim_key,
+                "text": text,
+                "span_start": span_start,
+                "span_end": span_end,
+                "known_at": known_at,
+                **options,
+            },
+            permissions={"research:write", "research:read"},
+            confirmed=True,
+        )
+
+    def add_research_evidence(self, document_id, kind, text, span_start, span_end, relation, known_at, **options):
+        return self.invoke(
+            "research.add_evidence",
+            {
+                "document_id": document_id,
+                "kind": kind,
+                "text": text,
+                "span_start": span_start,
+                "span_end": span_end,
+                "relation": relation,
+                "known_at": known_at,
+                **options,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
+    def add_research_contradiction(self, claim_a_id, claim_b_id, kind, explanation, known_at):
+        return self.invoke(
+            "research.add_contradiction",
+            {
+                "claim_a_id": claim_a_id,
+                "claim_b_id": claim_b_id,
+                "kind": kind,
+                "explanation": explanation,
+                "known_at": known_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
+    def create_research_thesis(self, title, initial_text, known_at):
+        return self.invoke(
+            "research.create_thesis",
+            {"title": title, "initial_text": initial_text, "known_at": known_at},
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
+    def revise_research_thesis(self, thesis_id, text, known_at):
+        return self.invoke(
+            "research.revise_thesis",
+            {"thesis_id": thesis_id, "text": text, "known_at": known_at},
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
+    def get_research_document(self, document_id):
+        return self.invoke(
+            "research.get_document",
+            {"document_id": document_id},
+            permissions={"research:read"},
+        )
+
+    def get_research_thesis(self, thesis_id):
+        return self.invoke(
+            "research.get_thesis", {"thesis_id": thesis_id}, permissions={"research:read"}
+        )
+
+    def search_research(self, query, **options):
+        return self.invoke(
+            "research.search",
+            {"query": query, **options},
+            permissions={"research:read"},
+        )
+
+    def trace_research(self, node_type, node_id, max_depth=3):
+        return self.invoke(
+            "research.trace",
+            {"node_type": node_type, "node_id": node_id, "max_depth": max_depth},
+            permissions={"research:read"},
+        )
+
+    def link_research(self, from_type, from_id, to_type, to_id, relation, known_at, effective_at=None):
+        return self.invoke(
+            "research.link",
+            {
+                "from_type": from_type,
+                "from_id": from_id,
+                "to_type": to_type,
+                "to_id": to_id,
+                "relation": relation,
+                "known_at": known_at,
+                "effective_at": effective_at,
+            },
+            permissions={"research:write"},
+            confirmed=True,
+        )
+
     def invoke(self, name, arguments=None, *, permissions=(), confirmed=False, dry_run=False):
         return self.capabilities.execute(
             name,

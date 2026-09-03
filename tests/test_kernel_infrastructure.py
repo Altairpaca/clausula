@@ -21,13 +21,14 @@ def imported_store(tmp_path: Path) -> tuple[Store, LedgerService, str]:
     with source.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=["id", "date", "type", "ticker", "quantity", "amount", "fee"],
+            fieldnames=["id", "date", "known_at", "type", "ticker", "quantity", "amount", "fee"],
         )
         writer.writeheader()
         writer.writerow(
             {
                 "id": "trade-1",
                 "date": "2025-01-01",
+                "known_at": "2025-01-01",
                 "type": "buy",
                 "ticker": "ABC",
                 "quantity": "2",
@@ -57,6 +58,9 @@ def test_migrations_are_ordered_and_checksummed(tmp_path):
         (6, "versioned_investment_policy", 64),
         (7, "deterministic_planning_artifacts", 64),
         (8, "decision_memory_links_and_reviews", 64),
+        (9, "research_evidence_graph", 64),
+        (10, "research_temporal_links", 64),
+        (11, "recommendation_lifecycle", 64),
     ]
 
     store.db.execute("DROP TRIGGER schema_migrations_reject_update")

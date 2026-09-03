@@ -52,6 +52,25 @@ from .policy import (
     PolicyRuleResult,
     PolicyVersion,
 )
+from .research import (
+    Claim,
+    Contradiction,
+    Evidence,
+    ResearchClaim,
+    ResearchContradiction,
+    ResearchDocument,
+    ResearchEvidence,
+    ResearchLink,
+    ResearchThesis,
+    Thesis,
+    ThesisRevision,
+)
+from .recommendation import (
+    Recommendation,
+    RecommendationAlternative,
+    RecommendationOrigin,
+    RecommendationStatus,
+)
 
 __all__ = [
     "DomainValidationError",
@@ -79,6 +98,21 @@ __all__ = [
     "PolicyRule",
     "PolicyRuleResult",
     "PolicyVersion",
+    "ResearchClaim",
+    "ResearchContradiction",
+    "ResearchDocument",
+    "ResearchEvidence",
+    "ResearchLink",
+    "ResearchThesis",
+    "ThesisRevision",
+    "Claim",
+    "Contradiction",
+    "Evidence",
+    "Thesis",
+    "Recommendation",
+    "RecommendationAlternative",
+    "RecommendationOrigin",
+    "RecommendationStatus",
     "ValuationGap",
     "ImportBatchRef",
     "CorporateAction",

@@ -15,7 +15,9 @@ def import_rows(service: LedgerService, account_id: str, path: Path, rows: list[
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            [{**row, "known_at": row.get("known_at") or row.get("date")} for row in rows]
+        )
     service.import_csv(account_id, path)
 
 

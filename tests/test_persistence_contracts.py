@@ -11,7 +11,16 @@ from clausula.domain import TransactionLeg
 
 
 def write_csv(path: Path, rows: list[dict], fieldnames: list[str] | None = None) -> None:
-    names = fieldnames or list(rows[0])
+    names = list(fieldnames or rows[0])
+    if "known_at" not in names:
+        names.insert(2, "known_at")
+        rows = [
+            {
+                **row,
+                "known_at": row.get("date") or row.get("effective_at") or "2025-01-01",
+            }
+            for row in rows
+        ]
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=names)
         writer.writeheader()
@@ -211,8 +220,8 @@ def test_pre_versioned_database_is_upgraded_without_rewriting_facts(tmp_path):
     store = Store(root)
 
     assert store.integrity_check() == "ok"
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 8
-    assert [row[0] for row in store.db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == 11
+    assert [row[0] for row in store.db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert store.db.execute("SELECT artifact_kind FROM artifact_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT adapter_name FROM import_details").fetchone()[0] == "legacy"
     assert store.db.execute("SELECT transaction_id FROM imported_rows").fetchone()[0] == transaction_id

@@ -34,9 +34,23 @@ def _with_new_cash(valuation: Mapping[str, Any], cash_available: Any) -> dict[st
     else:
         currency_exposure.append({"currency": base_currency, "base_value": canonical_decimal(cash)})
     total = dec(valuation["total_value"]) + cash
+    for line in allocation:
+        line["weight"] = (
+            None
+            if total == 0
+            else canonical_decimal(dec(line["base_value"]) / total)
+        )
     result["total_value"] = canonical_decimal(total)
     result["partial_value"] = canonical_decimal(dec(valuation["partial_value"]) + cash)
     result["allocation"] = allocation
+    concentration = [dict(line) for line in valuation.get("concentration", ())]
+    for line in concentration:
+        line["weight"] = (
+            None
+            if total == 0
+            else canonical_decimal(dec(line["base_value"]) / total)
+        )
+    result["concentration"] = concentration
     result["currency_exposure"] = currency_exposure
     return result
 
@@ -161,7 +175,21 @@ def compare_plan_scenarios(
         if not isinstance(actions, list):
             raise PolicyEvaluationError(f"planning scenario {key} actions must be an array")
         base = _with_new_cash(valuation, cash_available)
-        simulated = simulate_base_currency_trades(base, actions, instruments)
+        if base.get("complete") is not True:
+            raise PolicyEvaluationError("policy simulation requires a complete valuation")
+        if actions:
+            simulated = simulate_base_currency_trades(base, actions, instruments)
+        else:
+            simulated = {
+                **base,
+                "simulation": {
+                    "actions": [],
+                    "total_fees": "0",
+                    "total_tax_estimate": "0",
+                    "funding_assumption": "base_currency_cash",
+                    "ledger_mutated": False,
+                },
+            }
         evaluation = evaluate_policy(
             simulated,
             rules,
