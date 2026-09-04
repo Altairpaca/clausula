@@ -26,7 +26,7 @@ The UI should help a user answer, in order:
 
 ## What Clausula learns from mature open-source finance products
 
-Clausula should borrow interaction principles rather than page copies:
+Clausula borrows interaction principles rather than page copies:
 
 - **Wealthfolio**: local-first/private defaults, fast portfolio summary surfaces, explicit data-health feedback, privacy masking, and backend-owned performance semantics.
 - **Ghostfolio**: mature portfolio information architecture and clear account/holding/allocation decomposition.
@@ -37,55 +37,71 @@ Ideas are adopted only when they improve an investment decision or reduce operat
 
 ## Visual language
 
-The default desktop view should be calm, dense, and legible rather than terminal-like or gamified.
+The default desktop view should be calm, dense and legible rather than terminal-like or gamified.
 
 - Capital is prominent, but not the only hero metric.
 - Policy violations and incomplete valuation outrank decorative performance charts.
 - Monetary privacy masking is one click away.
 - Missing/stale data is visible rather than silently forward-filled.
 - Good/attention/violation colors carry semantic meaning and are used sparingly.
-- Charts are introduced only when their semantics are explicit and the backend path is fast enough to support them without hiding expensive recomputation.
+- Charts require explicit backend semantics; a visually attractive chart with ambiguous return or knowledge-time semantics does not belong in the product.
 
-## Capital Cockpit v0
+## Implemented Capital Cockpit read model
 
-The first read-only slice includes:
+The current loopback workspace/read model includes:
 
-- canonical / partial portfolio value;
-- cash weight and value;
-- largest-position concentration;
-- oldest accepted position-price date;
-- allocation view;
-- valuation gaps;
-- policy status and non-compliant/unavailable rules;
-- persisted plans;
-- decision memory timeline;
+- canonical or partial portfolio value and valuation completeness;
+- allocation/concentration and data gaps;
+- cash value, reserve requirement, deployable cash and reserve shortfall;
+- policy status plus signed headroom to deterministic boundaries;
+- persisted plans and typed execution-contract status;
+- material Attention;
+- recommendation inbox and recommendation lifecycle state;
+- evidence freshness/contradiction pressure;
+- decision and review queues;
+- recommendation -> decision lineage;
+- public-equity case monitoring;
 - explicit `as_of` / `known_as_of` controls;
 - local screen-privacy masking.
 
-The v0 intentionally does **not** request a long performance history. The current performance implementation replays valuation and cash-flow history repeatedly per requested date. A chart should be added after the replay/read-model path is made appropriately incremental or batched.
+The workspace itself is anonymous read-only. Protected capability invocation is owned by the local daemon and requires a daemon-issued principal; UI presentation does not become an authorization surface merely because the underlying read model contains actions or recommendations.
 
-## Next differentiating surfaces
+## Performance state
+
+The original replay bottlenecks are no longer the architectural blocker they were when this document was first written. Transaction metadata, instrument/price/FX access and multi-date performance reads now use batched/bounded query paths, and CI traces SQL to reject N+1-style query growth. `scripts/benchmark_reads.py` remains the machine-specific evidence harness.
+
+A long performance chart should therefore be added only when it answers a product question and its return semantics are explicit. In particular, portfolio wealth returns must not be presented as directly comparable with a benchmark unless the benchmark's `price_return`/`total_return` semantics and portfolio-income completeness support that comparison.
+
+## Implemented differentiators
 
 ### Capital runway and deployable cash
 
-Separate cash required by reserve policy from cash that is actually deployable. A single cash percentage is insufficient for personal capital allocation.
+The backend derives policy-required reserve, deployable cash and reserve gap from complete portfolio valuation plus active minimum-cash rules. If valuation is incomplete, the envelope fails closed rather than inventing deployable capital.
 
 ### Risk-budget drift
 
-Show distance to concentration/allocation/currency boundaries, not only whether the current state is already in violation. The useful question is often "how much room remains?"
+Policy results expose signed headroom to deterministic lower/upper boundaries, allowing the workspace to surface distance-to-limit rather than only already-triggered violations.
 
 ### Evidence pressure
 
-For every thesis/exposure, summarize evidence freshness, new supporting evidence, new contradictions, and unreviewed thesis revisions. This is advisory context, never canonical market truth.
+The decision workspace summarizes evidence state separately from canonical market/ledger truth and can surface supporting/contradicting pressure at explicit temporal cutoffs.
 
 ### Decision lineage
 
-Render recommendation -> decision -> transaction -> review as one traceable chain. The system should make it difficult to confuse a recommendation with an executed decision or to judge a decision only by its realized outcome.
+Recommendation-to-decision relationships are explicit and the broader workspace keeps recommendation, decision, execution and review states separate. A recommendation is never equivalent to an executed decision.
 
 ### Execution constraints
 
-Settlement, market-session, turnover, liquidity, fee/tax and jurisdictional constraints should become typed planning inputs where supported. They should not live only in prose.
+Execution contracts are typed application inputs rather than free-form notes, and plan evaluation can report configured/unconfigured/constraint state without placing brokerage orders.
 
-## Performance principle
+## Remaining product/release work
 
-A responsive workspace requires read models whose query growth is bounded by batches rather than entity counts. The known first targets are transaction/leg replay, position/price lookup, FX lookup, and repeated per-date performance reconstruction. Correctness and point-in-time semantics are frozen constraints; optimization must preserve both.
+The next step is not to add more dashboard chrome. The remaining high-value work is release validation around the existing product surface:
+
+- real provider and benchmark semantics (#34);
+- richer historical identifiers/corporate actions/accounting (#21);
+- concrete multi-process/MCP/plugin host runtime isolation (#23);
+- protected `main` and required CI (#6);
+- visual refinement only after representative local data proves which panels deserve prominence.
+
+The first stable release should follow those acceptance gates rather than using feature count as the release criterion.
