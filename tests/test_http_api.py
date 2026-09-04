@@ -9,6 +9,7 @@ import pytest
 
 from clausula import Store
 from clausula.api.http import create_server
+from clausula.application import PortfolioService
 
 
 def _request(url: str, method: str = "GET", payload: dict | None = None, permissions: tuple[str, ...] = (), confirmed: bool = False, dry_run: bool = False) -> tuple[int, dict | list]:
@@ -27,6 +28,61 @@ def _request(url: str, method: str = "GET", payload: dict | None = None, permiss
             return response.status, json.loads(response.read())
     except HTTPError as error:
         return error.code, json.loads(error.read())
+
+
+def test_http_serves_read_only_capital_cockpit_with_security_headers(tmp_path) -> None:
+    server = create_server(Store(tmp_path / "home"))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(f"{base}/") as response:
+            document = response.read().decode("utf-8")
+            assert response.status == 200
+            assert response.headers["Content-Type"].startswith("text/html")
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            assert response.headers["X-Frame-Options"] == "DENY"
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+            assert "Capital Cockpit" in document
+            assert "LOCAL · READ ONLY" in document
+            assert "Known as of" in document
+            assert "recommendation.transition" not in document
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_workspace_snapshot_is_one_read_only_projection(tmp_path) -> None:
+    store = Store(tmp_path / "home")
+    portfolio_id = PortfolioService(store).create("Household", "USD")
+    server = create_server(store)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, body = _request(
+            f"{base}/workspace/snapshot",
+            "POST",
+            {
+                "portfolio_id": portfolio_id,
+                "as_of": "2026-09-04",
+                "known_as_of": "2026-09-04",
+            },
+        )
+        assert status == 200
+        assert body["format"] == "clausula-capital-cockpit-v1"
+        assert body["portfolio"]["id"] == portfolio_id
+        assert body["valuation"]["complete"] is True
+        assert body["valuation"]["total_value"] == "0"
+        assert body["policies"] == []
+        assert body["plans"] == []
+        assert body["decisions"] == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_http_projects_registry_and_enforces_write_contract(tmp_path) -> None:
