@@ -8,6 +8,7 @@ from urllib.parse import unquote, urlparse
 
 from clausula.application import CoreRepository
 from clausula.application.cockpit import CapitalCockpitService
+from clausula.application.cockpit_plus import IntelligentCapitalCockpitService
 from clausula.capabilities import (
     CapabilityError,
     CapabilityPermissionError,
@@ -32,7 +33,11 @@ HTML_CSP = (
 
 def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     registry = build_core_registry(repository)
-    cockpit = CapitalCockpitService(repository)
+    cockpit = (
+        IntelligentCapitalCockpitService(repository)
+        if hasattr(repository, "db")
+        else CapitalCockpitService(repository)
+    )
     registry_lock = threading.RLock()
 
     class CapabilityHandler(BaseHTTPRequestHandler):
