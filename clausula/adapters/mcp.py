@@ -33,55 +33,27 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
     McpProfile.RESEARCH_READ: frozenset({"research:read"}),
     McpProfile.PORTFOLIO_READ: frozenset(
         {
-            "portfolio:read",
-            "ledger:read",
-            "market:read",
-            "policy:read",
-            "planning:read",
-            "decision:read",
-            "execution:read",
-            "recommendation:read",
+            "portfolio:read", "ledger:read", "market:read", "policy:read",
+            "planning:read", "decision:read", "execution:read",
+            "recommendation:read", "equity:read",
         }
     ),
     McpProfile.ADVISOR: frozenset(
         {
-            "portfolio:read",
-            "ledger:read",
-            "market:read",
-            "policy:read",
-            "planning:read",
-            "decision:read",
-            "execution:read",
-            "research:read",
-            "research:write",
-            "recommendation:create",
-            "recommendation:read",
+            "portfolio:read", "ledger:read", "market:read", "policy:read",
+            "planning:read", "decision:read", "execution:read",
+            "research:read", "research:write", "recommendation:create",
+            "recommendation:read", "equity:read", "equity:write",
         }
     ),
     McpProfile.ADMIN: frozenset(
         {
-            "ledger:read",
-            "ledger:write",
-            "portfolio:read",
-            "portfolio:write",
-            "market:read",
-            "market:write",
-            "policy:read",
-            "policy:write",
-            "planning:read",
-            "planning:write",
-            "decision:read",
-            "decision:write",
-            "execution:read",
-            "execution:write",
-            "research:read",
-            "research:write",
-            "recommendation:create",
-            "recommendation:read",
-            "recommendation:write",
-            "system:read",
-            "system:export",
-            "system:backup",
+            "ledger:read", "ledger:write", "portfolio:read", "portfolio:write",
+            "market:read", "market:write", "policy:read", "policy:write",
+            "planning:read", "planning:write", "decision:read", "decision:write",
+            "execution:read", "execution:write", "research:read", "research:write",
+            "recommendation:create", "recommendation:read", "recommendation:write",
+            "equity:read", "equity:write", "system:read", "system:export", "system:backup",
         }
     ),
 }
@@ -102,12 +74,9 @@ class McpAdapter:
             if set(permissions) <= allowed:
                 tools.append(
                     McpTool(
-                        description["name"],
-                        description["description"],
-                        dict(description["input_schema"]),
-                        dict(description["output_schema"]),
-                        permissions,
-                        description["confirmation_required"],
+                        description["name"], description["description"],
+                        dict(description["input_schema"]), dict(description["output_schema"]),
+                        permissions, description["confirmation_required"],
                     )
                 )
         return tools
@@ -130,30 +99,18 @@ class McpAdapter:
             )
         try:
             result = self.registry.execute(
-                name,
-                arguments,
-                permissions=allowed,
-                confirmed=confirmed,
-                dry_run=dry_run,
+                name, arguments, permissions=allowed, confirmed=confirmed, dry_run=dry_run
             )
         except Exception:
             self.repository.record_adapter_invocation(
-                adapter="mcp",
-                actor_type="agent",
-                actor_id=agent_id,
-                capability=name,
-                side_effect=spec.side_effect.value,
-                confirmed=confirmed,
-                succeeded=False,
+                adapter="mcp", actor_type="agent", actor_id=agent_id,
+                capability=name, side_effect=spec.side_effect.value,
+                confirmed=confirmed, succeeded=False,
             )
             raise
         self.repository.record_adapter_invocation(
-            adapter="mcp",
-            actor_type="agent",
-            actor_id=agent_id,
-            capability=name,
-            side_effect=spec.side_effect.value,
-            confirmed=confirmed,
-            succeeded=True,
+            adapter="mcp", actor_type="agent", actor_id=agent_id,
+            capability=name, side_effect=spec.side_effect.value,
+            confirmed=confirmed, succeeded=True,
         )
         return result
