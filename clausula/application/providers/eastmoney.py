@@ -10,6 +10,7 @@ series with the adjustment mode recorded, not total-return indices.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from typing import Any
 from urllib.request import Request, urlopen
@@ -23,7 +24,7 @@ class EastmoneyInstrument:
     market_code: str
     symbol: str
     name: str = ""
-    currency: str = "USD"
+    currency: str = ""
 
 
 MARKET_PREFIX = {
@@ -31,6 +32,13 @@ MARKET_PREFIX = {
     "CN-SZ": "0.",
     "HK": "116.",
     "US": "105.",
+}
+
+MARKET_CURRENCY = {
+    "CN-SH": "CNY",
+    "CN-SZ": "CNY",
+    "HK": "HKD",
+    "US": "USD",
 }
 
 FQT_LABELS = {
@@ -64,6 +72,8 @@ class EastmoneyDailyProvider:
         fqt: str = "0",
         timeout_seconds: float = 30.0,
     ) -> None:
+        if market not in MARKET_PREFIX:
+            raise EastmoneyProviderError(f"unsupported market: {market}")
         self.instrument = instrument
         self.market = market
         if fqt not in FQT_LABELS:
@@ -135,6 +145,11 @@ class EastmoneyDailyProvider:
         name, code, rows = self.parse_klines(body)
         known_at = now()
         recorded_at = now()
+        currency = self.instrument.currency or MARKET_CURRENCY.get(self.market, "")
+        if not currency:
+            raise EastmoneyProviderError(
+                f"currency for market {self.market} is not configured and not set on the instrument"
+            )
         observations = []
         for row in rows:
             observed = canonical_timestamp(row["observed_at"])
@@ -148,7 +163,7 @@ class EastmoneyDailyProvider:
                     observed_at=observed,
                     known_at=known_at,
                     close=row["close"],
-                    currency=self.instrument.currency or "USD",
+                    currency=currency,
                     identifier_scheme="ticker",
                     instrument_name=name or self.instrument.name,
                     asset_type="stock",
@@ -162,6 +177,8 @@ class EastmoneyDailyProvider:
             observations=observations,
             raw_payload={
                 "capture": capture,
+                "body_sha256": hashlib.sha256(body).hexdigest(),
+                "body_bytes": len(body),
                 "klines": [row["observed_at"] for row in rows],
             },
             adapter_name="eastmoney-http",

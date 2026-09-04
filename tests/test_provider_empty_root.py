@@ -6,9 +6,18 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from clausula import Store
 from clausula.application.market_provider import ProviderSnapshotImporter
-from clausula.application.providers.eastmoney import EastmoneyDailyProvider
+from clausula.application.providers.eastmoney import (
+    EastmoneyDailyProvider,
+    EastmoneyInstrument,
+    EastmoneyProviderError,
+    MARKET_CURRENCY,
+    MARKET_PREFIX,
+    snapshot_for_market,
+)
 
 FIXTURE_BODY = json.dumps(
     {
@@ -118,6 +127,21 @@ def test_empty_observation_snapshot_fails_without_partial_publish() -> None:
         pass
     assert store.market_datasets("daily_prices") == []
     store.close()
+
+
+def test_market_currency_is_never_a_silent_usd_default() -> None:
+    assert MARKET_CURRENCY == {
+        "CN-SH": "CNY",
+        "CN-SZ": "CNY",
+        "HK": "HKD",
+        "US": "USD",
+    }
+    assert set(MARKET_CURRENCY) == set(MARKET_PREFIX)
+    with pytest.raises(EastmoneyProviderError, match="unsupported market"):
+        EastmoneyDailyProvider(
+            EastmoneyInstrument(market_code="XX", symbol="X"), market="XX"
+        )
+    assert snapshot_for_market
 
 
 def test_parse_klines_rejects_malformed_rows() -> None:
