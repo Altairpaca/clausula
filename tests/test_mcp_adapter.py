@@ -24,6 +24,14 @@ def test_mcp_profile_and_actor_are_bound_at_construction(tmp_path) -> None:
     assert not any(tool.name == "account.create" for tool in tools)
 
 
+def test_unbound_mcp_adapter_can_discover_but_never_invoke(tmp_path) -> None:
+    adapter = McpAdapter(Store(tmp_path / "home"))
+    tools = adapter.list_tools(McpProfile.RESEARCH_READ)
+    assert any(tool.name == "research.search" for tool in tools)
+    with pytest.raises(RuntimeError, match="constructor-bound"):
+        adapter.call("research.search", {"query": "cash"})
+
+
 def test_mcp_call_uses_bound_profile_and_actor_identity(tmp_path) -> None:
     store = Store(tmp_path / "home")
     adapter = McpAdapter(
