@@ -12,11 +12,18 @@ _ledger_module.LedgerService = LedgerService
 from .ports import CoreRepository, LedgerRepository
 from .rebuild import LedgerRebuilder, RebuildError
 from .market import MarketImportError, MarketService
+from .market_provider import (
+    MarketProvider,
+    ProviderPrice,
+    ProviderSnapshot,
+    ProviderSnapshotImporter,
+)
 from .portfolio_fast import PortfolioService
 from . import portfolio as _portfolio_module
 
 _portfolio_module.PortfolioService = PortfolioService
 
+from .benchmark import BenchmarkService, ReturnSeriesRepository
 from .policy import PolicyService
 from .planning import PlanningError, PlanningService
 from .decision import DecisionError, DecisionService
@@ -26,13 +33,19 @@ from .execution import ExecutionContractError, ExecutionService
 from .decision_workspace import DecisionWorkspaceRepository, DecisionWorkspaceService
 
 __all__ = [
+    "BenchmarkService",
     "CoreRepository",
     "ImportValidationError",
     "LedgerRebuilder",
     "LedgerRepository",
     "LedgerService",
     "MarketImportError",
+    "MarketProvider",
     "MarketService",
+    "ProviderPrice",
+    "ProviderSnapshot",
+    "ProviderSnapshotImporter",
+    "ReturnSeriesRepository",
     "PortfolioService",
     "PolicyService",
     "PlanningError",
