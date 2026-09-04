@@ -28,8 +28,21 @@ class LedgerRebuilder(_BaseLedgerRebuilder):
         accounting = self._rebuild_accounting_policies(result["account_mapping"])
         result["accounting_policy_mapping"] = accounting["mapping"]
         result["accounting_policy_comparisons"] = accounting["comparisons"]
+        comparison_groups = (
+            "comparisons",
+            "portfolio_comparisons",
+            "policy_comparisons",
+            "plan_comparisons",
+            "decision_comparisons",
+            "research_comparisons",
+        )
+        base_matches = all(
+            row.get("matches", True)
+            for key in comparison_groups
+            for row in result.get(key, [])
+        )
         result["consistent"] = (
-            bool(result.get("consistent") or not result.get("warnings"))
+            base_matches
             and not result["warnings"]
             and all(row["matches"] for row in accounting["comparisons"])
         )
