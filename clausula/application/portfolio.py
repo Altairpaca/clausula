@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from decimal import Decimal
 import json
 from typing import Any
@@ -21,6 +22,15 @@ from .ports import CoreRepository
 
 
 PORTFOLIO_EVENT_FORMAT = "clausula-portfolio-event-v1"
+
+
+@dataclass(slots=True)
+class _ValuationReadCache:
+    """Per-snapshot cache; never reused across temporal or dataset cutoffs."""
+
+    instruments: dict[str, dict[str, Any]] = field(default_factory=dict)
+    prices: dict[str, dict[str, Any] | None] = field(default_factory=dict)
+    fx_rates: dict[tuple[str, str], dict[str, Any] | None] = field(default_factory=dict)
 
 
 class PortfolioService:
@@ -153,6 +163,31 @@ class PortfolioService:
         fx_dataset_name: str | None = None,
         fx_dataset_version: str | None = None,
     ) -> dict[str, Any]:
+        return self._valuation(
+            account_id,
+            as_of,
+            known_as_of=known_as_of,
+            base_currency=base_currency,
+            price_dataset_name=price_dataset_name,
+            price_dataset_version=price_dataset_version,
+            fx_dataset_name=fx_dataset_name,
+            fx_dataset_version=fx_dataset_version,
+            cache=_ValuationReadCache(),
+        )
+
+    def _valuation(
+        self,
+        account_id: str,
+        as_of: str | None = None,
+        *,
+        known_as_of: str | None = None,
+        base_currency: str = "USD",
+        price_dataset_name: str | None = None,
+        price_dataset_version: str | None = None,
+        fx_dataset_name: str | None = None,
+        fx_dataset_version: str | None = None,
+        cache: _ValuationReadCache,
+    ) -> dict[str, Any]:
         effective_cutoff = canonical_timestamp(as_of or now())
         knowledge_cutoff = canonical_timestamp(known_as_of or effective_cutoff)
         state = self.ledger.state(
@@ -160,46 +195,55 @@ class PortfolioService:
             effective_cutoff,
             known_as_of=knowledge_cutoff,
         )
-        instruments = {}
-        prices = {}
-        rates = {}
+        instruments: dict[str, dict[str, Any]] = {}
+        prices: dict[str, dict[str, Any]] = {}
+        rates: dict[tuple[str, str], dict[str, Any]] = {}
+
         for instrument_id in state["positions"]:
-            instruments[instrument_id] = dict(self.repository.instrument_details(instrument_id))
-            price = self.repository.market_price(
-                instrument_id,
-                effective_cutoff,
-                knowledge_cutoff,
-                price_dataset_name,
-                price_dataset_version,
-            )
-            if price is not None:
-                prices[instrument_id] = dict(price)
+            if instrument_id not in cache.instruments:
+                cache.instruments[instrument_id] = dict(
+                    self.repository.instrument_details(instrument_id)
+                )
+            instruments[instrument_id] = cache.instruments[instrument_id]
+
+            if instrument_id not in cache.prices:
+                price = self.repository.market_price(
+                    instrument_id,
+                    effective_cutoff,
+                    knowledge_cutoff,
+                    price_dataset_name,
+                    price_dataset_version,
+                )
+                cache.prices[instrument_id] = None if price is None else dict(price)
+            cached_price = cache.prices[instrument_id]
+            if cached_price is not None:
+                prices[instrument_id] = cached_price
 
         currencies = set(state["cash_by_currency"])
         currencies.update(instrument["currency"] for instrument in instruments.values())
+        normalized_base = base_currency.upper()
         for currency in currencies:
-            if currency.upper() == base_currency.upper():
+            normalized_currency = currency.upper()
+            if normalized_currency == normalized_base:
                 continue
-            direct = self.repository.market_fx_rate(
-                currency,
-                base_currency,
-                effective_cutoff,
-                knowledge_cutoff,
-                fx_dataset_name,
-                fx_dataset_version,
-            )
-            inverse = self.repository.market_fx_rate(
-                base_currency,
-                currency,
-                effective_cutoff,
-                knowledge_cutoff,
-                fx_dataset_name,
-                fx_dataset_version,
-            )
-            if direct is not None:
-                rates[(currency.upper(), base_currency.upper())] = dict(direct)
-            if inverse is not None:
-                rates[(base_currency.upper(), currency.upper())] = dict(inverse)
+            for source, target in (
+                (normalized_currency, normalized_base),
+                (normalized_base, normalized_currency),
+            ):
+                key = (source, target)
+                if key not in cache.fx_rates:
+                    rate = self.repository.market_fx_rate(
+                        source,
+                        target,
+                        effective_cutoff,
+                        knowledge_cutoff,
+                        fx_dataset_name,
+                        fx_dataset_version,
+                    )
+                    cache.fx_rates[key] = None if rate is None else dict(rate)
+                cached_rate = cache.fx_rates[key]
+                if cached_rate is not None:
+                    rates[key] = cached_rate
 
         result = value_portfolio(
             state,
@@ -226,8 +270,9 @@ class PortfolioService:
         account_ids = self.repository.portfolio_accounts(
             portfolio_id, as_of, known_as_of
         )
+        cache = _ValuationReadCache()
         values = [
-            self.valuation(
+            self._valuation(
                 account_id,
                 as_of,
                 known_as_of=known_as_of,
@@ -236,6 +281,7 @@ class PortfolioService:
                 price_dataset_version=price_dataset_version,
                 fx_dataset_name=fx_dataset_name,
                 fx_dataset_version=fx_dataset_version,
+                cache=cache,
             )
             for account_id in account_ids
         ]
@@ -278,9 +324,11 @@ class PortfolioService:
             day = cutoff[:10]
             flow = sum(
                 (
-                    dec(self.ledger.external_flows(
-                        account_id, cutoff, known_as_of=point_knowledge
-                    ).get(day, "0"))
+                    dec(
+                        self.ledger.external_flows(
+                            account_id, cutoff, known_as_of=point_knowledge
+                        ).get(day, "0")
+                    )
                     for account_id in self.repository.portfolio_accounts(
                         portfolio_id, cutoff, point_knowledge
                     )
