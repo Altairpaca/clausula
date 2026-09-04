@@ -3,8 +3,9 @@
 - Snapshot date: 2026-09-04
 - Public branch: `main`
 - Stable domain baseline: M1–M5.1 frozen, M6 research/evidence graph implemented
+- Product intelligence: recommendation lifecycle and derived material-attention persistence are implemented
 - Integration slices: M7 HTTP, M9 plugin bridge, and M10 MCP projection are local/partial and are not remote-security boundaries
-- Next product work: recommendation/attention and higher-level user surfaces
+- Next product work: higher-level user surfaces and deliberate hardening of deferred integration boundaries
 
 ## Implemented baseline
 
@@ -56,6 +57,12 @@ Accepted reference: `docs/adr/0007-decision-memory-and-review.md`.
 Implemented: immutable text ingestion, source artifact provenance, source-spanned claims/evidence, contradictions, append-only thesis revisions, typed graph links, deterministic temporal substring search, schema migrations, canonical export/backup, clean rebuild, CLI/SDK/Capability Registry integration, and acceptance tests.
 
 PDF parsing, network fetching, and vector search are outside the current slice.
+
+### Recommendation and Material Attention
+
+The recommendation lifecycle is persisted through append-only recommendation records, alternatives, and lifecycle transitions. Recommendation state remains distinct from canonical ledger facts and does not autonomously place brokerage orders.
+
+Material attention is implemented as a derived local notification surface. `AttentionService` rejects non-material evaluations, canonicalizes semantic event data, computes a stable SHA-256 fingerprint for exact deduplication, and records material changes through the existing tamper-evident audit ledger. Attention evaluation does not create or mutate ledger, policy, recommendation, or decision facts. Persistence across store reopen and audit-chain validity are covered by regression tests.
 
 ## Partial integration surfaces
 
