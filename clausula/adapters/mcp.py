@@ -98,14 +98,43 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
 
 
 class McpAdapter:
-    """Project registry capabilities into profile-scoped structured tools."""
+    """Profile-bound invocation adapter plus optional read-only tool discovery.
 
-    def __init__(self, repository: CoreRepository):
+    Invocation authority is constructor-bound: a transport creates an adapter only
+    after binding an authenticated client to a profile and actor identity. For
+    compatibility, an unbound adapter may describe the tools visible to an
+    explicitly requested profile; discovery is read-only and cannot be used to
+    invoke anything. Confirmation remains host-controlled in all cases.
+    """
+
+    def __init__(
+        self,
+        repository: CoreRepository,
+        *,
+        profile: McpProfile | None = None,
+        agent_id: str | None = None,
+    ) -> None:
         self.repository = repository
-        self.registry = build_core_registry(repository)
+        self.registry: CapabilityRegistry = build_core_registry(repository)
+        if profile is None:
+            if agent_id is not None and str(agent_id).strip():
+                raise ValueError("agent_id requires a bound MCP profile")
+            self.profile: McpProfile | None = None
+            self.agent_id: str | None = None
+            self.permissions = frozenset()
+            return
+        normalized_agent = str(agent_id or "").strip()
+        if not normalized_agent:
+            raise ValueError("agent_id cannot be empty")
+        self.profile = McpProfile(profile)
+        self.agent_id = normalized_agent
+        self.permissions = PROFILE_PERMISSIONS[self.profile]
 
-    def list_tools(self, profile: McpProfile) -> list[McpTool]:
-        allowed = PROFILE_PERMISSIONS[profile]
+    def list_tools(self, profile: McpProfile | None = None) -> list[McpTool]:
+        selected = self.profile if profile is None else McpProfile(profile)
+        if selected is None:
+            raise ValueError("profile is required for unbound MCP tool discovery")
+        allowed = PROFILE_PERMISSIONS[selected]
         tools = []
         for description in self.registry.describe():
             permissions = tuple(description["permissions"])
@@ -124,25 +153,26 @@ class McpAdapter:
 
     def call(
         self,
-        profile: McpProfile,
         name: str,
         arguments: dict[str, Any],
         *,
-        agent_id: str = "anonymous-agent",
-        confirmed: bool = False,
         dry_run: bool = False,
     ) -> Any:
-        allowed = PROFILE_PERMISSIONS[profile]
-        spec = self.registry.get(name)
-        if not set(spec.permissions) <= allowed:
-            raise CapabilityPermissionError(
-                f"capability is not available to profile: {profile.value}"
+        if self.profile is None or self.agent_id is None:
+            raise RuntimeError(
+                "MCP invocation requires a constructor-bound profile and agent_id"
             )
+        spec = self.registry.get(name)
+        if not set(spec.permissions) <= self.permissions:
+            raise CapabilityPermissionError(
+                f"capability is not available to profile: {self.profile.value}"
+            )
+        confirmed = False
         try:
             result = self.registry.execute(
                 name,
                 arguments,
-                permissions=allowed,
+                permissions=self.permissions,
                 confirmed=confirmed,
                 dry_run=dry_run,
             )
@@ -150,7 +180,7 @@ class McpAdapter:
             self.repository.record_adapter_invocation(
                 adapter="mcp",
                 actor_type="agent",
-                actor_id=agent_id,
+                actor_id=self.agent_id,
                 capability=name,
                 side_effect=spec.side_effect.value,
                 confirmed=confirmed,
@@ -160,7 +190,7 @@ class McpAdapter:
         self.repository.record_adapter_invocation(
             adapter="mcp",
             actor_type="agent",
-            actor_id=agent_id,
+            actor_id=self.agent_id,
             capability=name,
             side_effect=spec.side_effect.value,
             confirmed=confirmed,

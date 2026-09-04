@@ -7,6 +7,7 @@ import stat
 
 import pytest
 
+from clausula import LedgerService, Store
 from clausula.adapters.mcp import McpProfile
 from clausula.api.auth import LocalAuthRegistry
 from clausula.api.daemon import DaemonAlreadyRunning, DaemonLease, write_auth_manifest
@@ -47,3 +48,46 @@ def test_auth_manifest_is_private_ephemeral_bootstrap(tmp_path: Path) -> None:
 
     path.unlink()
     assert not path.exists()
+
+
+def test_store_reopen_preserves_state_and_extends_audit_chain(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    first = Store(home)
+    account_id = LedgerService(first).create_account("broker", "persistent")
+    first.record_adapter_invocation(
+        adapter="daemon-test",
+        actor_type="principal",
+        actor_id="local-admin",
+        capability="system.check",
+        side_effect="local_read",
+        confirmed=False,
+        succeeded=True,
+    )
+    first_tail = first.db.execute(
+        "SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1"
+    ).fetchone()[0]
+    first.close()
+
+    second = Store(home)
+    try:
+        assert second.db.execute(
+            "SELECT id FROM accounts WHERE id=?", (account_id,)
+        ).fetchone()[0] == account_id
+        assert second.verify_audit_chain()["valid"] is True
+        second.record_adapter_invocation(
+            adapter="daemon-test",
+            actor_type="principal",
+            actor_id="local-admin",
+            capability="system.check",
+            side_effect="local_read",
+            confirmed=False,
+            succeeded=True,
+        )
+        latest = second.db.execute(
+            "SELECT previous_hash,event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        assert latest["previous_hash"] == first_tail
+        assert latest["event_hash"] != first_tail
+        assert second.verify_audit_chain()["valid"] is True
+    finally:
+        second.close()
