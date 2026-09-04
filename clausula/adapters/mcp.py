@@ -76,6 +76,7 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "execution:write",
             "research:read",
             "research:write",
+            "network:read",
             "recommendation:create",
             "recommendation:read",
             "recommendation:write",
