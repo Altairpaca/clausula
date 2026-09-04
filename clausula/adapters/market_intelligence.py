@@ -76,8 +76,13 @@ class MarketIntelligenceProjection:
             quality_counts[str(row["quality"])] = quality_counts.get(
                 str(row["quality"]), 0
             ) + 1
-        latest_observed = max((row["observed_at"] for row in rows), default=None)
-        latest_known = max((row["known_at"] for row in rows), default=None)
+        latest_row = max(
+            rows,
+            key=lambda row: (row["observed_at"], row["known_at"], row["id"]),
+            default=None,
+        )
+        latest_observed = None if latest_row is None else latest_row["observed_at"]
+        latest_known = None if latest_row is None else latest_row["known_at"]
 
         conflicts = self._conflicts(
             price_rows,
@@ -85,21 +90,26 @@ class MarketIntelligenceProjection:
             knowledge_cutoff=knowledge_cutoff,
         )
         manifest = json.loads(dataset["manifest_json"])
-        return_meta = manifest.get("return_series") or {}
+        visible_return_rows = [
+            row
+            for row in manifest.get("rows", ())
+            if row.get("return_index") is not None
+            and row.get("return_semantics") in RETURN_SEMANTICS
+            and row.get("quality", "accepted").lower() == "accepted"
+            and row.get("observed_at", "") <= effective_cutoff
+            and row.get("known_at", "") <= knowledge_cutoff
+        ]
         return_semantics = sorted(
-            {
-                row.get("return_semantics")
-                for row in manifest.get("rows", ())
-                if row.get("return_index") is not None
-                and row.get("return_semantics") in RETURN_SEMANTICS
-                and row.get("observed_at", "") <= effective_cutoff
-                and row.get("known_at", "") <= knowledge_cutoff
-            }
+            {row["return_semantics"] for row in visible_return_rows}
         )
 
         if not rows:
             status = "absent"
-        elif quality_counts.get("suspect", 0) or quality_counts.get("rejected", 0) or conflicts:
+        elif (
+            quality_counts.get("suspect", 0)
+            or quality_counts.get("rejected", 0)
+            or conflicts
+        ):
             status = "degraded"
         else:
             status = "healthy"
@@ -122,7 +132,9 @@ class MarketIntelligenceProjection:
             "observations": len(rows),
             "price_observations": len(price_rows),
             "fx_observations": len(fx_rows),
-            "instrument_coverage": len({row["instrument_id"] for row in price_rows}),
+            "instrument_coverage": len(
+                {row["instrument_id"] for row in price_rows}
+            ),
             "fx_pair_coverage": len(
                 {(row["from_currency"], row["to_currency"]) for row in fx_rows}
             ),
@@ -132,13 +144,18 @@ class MarketIntelligenceProjection:
             "knowledge_lag_days": (
                 None
                 if latest_observed is None or latest_known is None
-                else max((_timestamp(latest_known) - _timestamp(latest_observed)).days, 0)
+                else max(
+                    (_timestamp(latest_known) - _timestamp(latest_observed)).days,
+                    0,
+                )
             ),
             "conflicts": conflicts,
             "return_series": {
-                "present": bool(return_semantics or return_meta.get("present") is True),
+                "present": bool(visible_return_rows),
                 "semantics": return_semantics,
-                "fallback_semantics": "price_return_only" if not return_semantics else None,
+                "fallback_semantics": (
+                    "price_return_only" if not visible_return_rows else None
+                ),
             },
         }
 
@@ -165,7 +182,9 @@ class MarketIntelligenceProjection:
         ).fetchall()
         grouped: dict[tuple[str, str], list[Any]] = {}
         for row in rows:
-            grouped.setdefault((row["instrument_id"], row["observed_at"]), []).append(row)
+            grouped.setdefault(
+                (row["instrument_id"], row["observed_at"]), []
+            ).append(row)
         output: list[dict[str, Any]] = []
         for (instrument_id, observed_at), group in grouped.items():
             values = {(row["close"], row["currency"]) for row in group}
@@ -213,7 +232,13 @@ class MarketIntelligenceProjection:
             and row.get("known_at", "") <= knowledge_cutoff
             and row.get("return_index") is not None
         ]
-        visible.sort(key=lambda row: (row["observed_at"], row["known_at"], row.get("row_number", 0)))
+        visible.sort(
+            key=lambda row: (
+                row["observed_at"],
+                row["known_at"],
+                row.get("row_number", 0),
+            )
+        )
         if not visible:
             return {
                 "dataset_name": dataset_name,
@@ -239,7 +264,9 @@ class MarketIntelligenceProjection:
         previous: Decimal | None = None
         for row in visible:
             value = dec(row["return_index"])
-            period_return = None if previous is None else value / previous - Decimal(1)
+            period_return = (
+                None if previous is None else value / previous - Decimal(1)
+            )
             series.append(
                 {
                     "observed_at": row["observed_at"],
