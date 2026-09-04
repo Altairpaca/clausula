@@ -10,6 +10,7 @@ dependencies = []
 
 [project.scripts]
 clausula = "clausula.cli:main"
+clausula-workspace = "clausula.api.workspace:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
