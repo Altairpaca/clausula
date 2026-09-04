@@ -1,6 +1,6 @@
 # Clausula
 
-Clausula is a local-first, deterministic investment decision system. It provides versioned ledgers, portfolios, market data, investment policies, planning, decision memory, research evidence, recommendation lifecycle management, and material-attention tracking without making an LLM the system of record.
+Clausula is a local-first, deterministic investment decision system. It combines versioned ledgers, market and portfolio state, policy-as-code, planning, decision memory, research evidence, recommendations and material-attention tracking without making an LLM the system of record.
 
 <p align="center">
   <img src="docs/assets/system-map.svg" alt="Clausula deterministic investment decision system map" width="96%">
@@ -10,8 +10,9 @@ Clausula is a local-first, deterministic investment decision system. It provides
 
 - Financial calculations use deterministic Python services and `Decimal`.
 - Historical facts are append-only and retain source provenance.
-- As-of queries distinguish `effective_at`, `known_at`, and `recorded_at` to make look-ahead explicit.
-- Agent, MCP, HTTP, CLI, SDK, and local workspace surfaces project the same deterministic application state instead of owning financial truth.
+- As-of queries distinguish `effective_at`, `known_at`, and `recorded_at` so look-ahead is explicit.
+- Capital state, policy boundaries, evidence, recommendations, decisions, execution constraints and reviews remain distinct concepts.
+- CLI, workspace, HTTP, MCP, plugin and agent surfaces project the same deterministic application state rather than owning financial truth.
 - Version 0.x does not place brokerage orders autonomously.
 
 ## Quick start
@@ -21,45 +22,50 @@ Requires Python 3.12 or newer.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[research]"
 
-# Inspect the capability surface and validate local state.
 clausula capability list
 clausula system check
-
-# Create a local account; commands return structured JSON.
 clausula account create DemoInstitution "Paper Account"
 
-# Open the loopback-only, read-only Capital Cockpit UI.
-clausula-workspace
+# Preferred local owner: starts the loopback daemon and Capital Cockpit.
+clausula-daemon
 ```
 
-The Capital Cockpit is intentionally decision-first: it keeps `as_of` and `known_as_of` visible and surfaces valuation completeness, allocation/concentration, policy boundaries, data gaps, persisted plans, and decision memory. The UI itself exposes no write controls; the underlying 0.x HTTP capability projection remains a local integration surface rather than a remote authentication boundary.
+`clausula-workspace` remains a compatibility entry point and routes through the same daemon path. The daemon owns local write serialization, server-side principal permissions and request-bound confirmation state. Its generated `daemon-auth.json` is sensitive ephemeral runtime state and must not be committed.
 
-Run the verification suite before changing domain or persistence contracts:
-
-```bash
-python -m pytest -q
-python -m compileall -q clausula tests
-git diff --check
-```
+The Capital Cockpit is decision-first: `as_of` and `known_as_of` remain visible, and the read model composes valuation completeness, allocation/concentration, reserve/deployable cash, policy headroom, execution constraints, plans, attention, evidence pressure, recommendations, decisions and review lineage. Anonymous workspace projection is read-only; capability invocation requires a daemon-issued local bearer principal.
 
 ## Architecture
 
 | Layer | Responsibility |
 | --- | --- |
-| `clausula/domain` | immutable domain types and contracts |
+| `clausula/domain` | immutable domain types and temporal contracts |
 | `clausula/application` | deterministic use cases and repository ports |
-| `clausula/analytics` | portfolio, policy, planning, performance and cost-basis calculations |
-| `clausula/adapters` | SQLite, backup, audit, migrations and MCP projections |
-| `clausula/capabilities` | permissioned capability registry shared by external surfaces |
-| `clausula/api`, `clausula/ui`, `cli.py`, `sdk.py` | local HTTP/workspace, CLI and Python projections |
+| `clausula/analytics` | portfolio, policy, planning, performance and accounting calculations |
+| `clausula/adapters` | SQLite, backup, audit, migrations, market/accounting projections and MCP |
+| `clausula/capabilities` | permissioned capability registry shared by integration surfaces |
+| `clausula/plugins` | plugin manifest, discovery and host-policy authorization contracts |
+| `clausula/api`, `clausula/ui`, `cli.py`, `sdk.py` | daemon, local HTTP/workspace, CLI and Python projections |
 
-The current implementation includes the kernel, ledger, market and portfolio analytics, policy-as-code, deterministic planning, decision memory, a local research evidence graph, an append-only recommendation lifecycle, and deterministic material-attention persistence. See [`docs/project/STATUS.md`](docs/project/STATUS.md) for frozen milestones, verification evidence, deferred capabilities, and known risks.
+Research ingestion supports local text/Markdown/HTML/PDF plus stateless web capture with source maps and provenance. Market provider snapshot and benchmark-return contracts are implemented, while real provider/corpus acceptance remains deliberately outside synthetic CI.
 
-## Security and data boundary
+See [`docs/project/STATUS.md`](docs/project/STATUS.md) for implementation status and [`docs/project/LOCAL_ACCEPTANCE.md`](docs/project/LOCAL_ACCEPTANCE.md) for the remaining release gates.
 
-Clausula is local-first. Runtime financial data, databases, backups, agent state, tool configuration, and credentials do not belong in this repository. The 0.x HTTP and MCP projections are integration adapters rather than authenticated remote-service boundaries; keep them local or place an authenticated gateway in front of them. See [`SECURITY.md`](SECURITY.md) before exposing any service outside the host.
+## Verification
+
+```bash
+python -m pytest -q
+python -m compileall -q clausula tests
+python -m build
+git diff --check
+```
+
+## Security and release boundary
+
+Clausula is local-first. Runtime financial data, databases, backups, raw private research, agent state, tool configuration and credentials do not belong in this repository. Loopback bearer authentication is a local integration boundary, not an internet-facing TLS or multi-tenant security contract. Plugin host policy is authorization preflight, not an OS sandbox. See [`SECURITY.md`](SECURITY.md).
+
+There is intentionally no stable release tag yet. The first tagged release is gated on repository protection plus the forward-migration, host-runtime and real-data acceptance work tracked in #6, #21, #23 and #34.
 
 ## License
 
