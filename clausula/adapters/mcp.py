@@ -98,18 +98,36 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
 
 
 class McpAdapter:
-    """Project registry capabilities into profile-scoped structured tools."""
+    """Profile-bound projection of registry capabilities for one MCP identity.
 
-    def __init__(self, repository: CoreRepository):
+    The profile and actor identity are constructor configuration, not per-call
+    arguments. A transport may create one adapter after authenticating/binding a
+    client, but an individual tool invocation cannot upgrade itself to another
+    profile. Confirmation remains host-controlled; callers may dry-run but cannot
+    assert `confirmed=True` through this adapter.
+    """
+
+    def __init__(
+        self,
+        repository: CoreRepository,
+        *,
+        profile: McpProfile,
+        agent_id: str,
+    ) -> None:
+        normalized_agent = str(agent_id).strip()
+        if not normalized_agent:
+            raise ValueError("agent_id cannot be empty")
         self.repository = repository
-        self.registry = build_core_registry(repository)
+        self.registry: CapabilityRegistry = build_core_registry(repository)
+        self.profile = McpProfile(profile)
+        self.agent_id = normalized_agent
+        self.permissions = PROFILE_PERMISSIONS[self.profile]
 
-    def list_tools(self, profile: McpProfile) -> list[McpTool]:
-        allowed = PROFILE_PERMISSIONS[profile]
+    def list_tools(self) -> list[McpTool]:
         tools = []
         for description in self.registry.describe():
             permissions = tuple(description["permissions"])
-            if set(permissions) <= allowed:
+            if set(permissions) <= self.permissions:
                 tools.append(
                     McpTool(
                         description["name"],
@@ -124,25 +142,22 @@ class McpAdapter:
 
     def call(
         self,
-        profile: McpProfile,
         name: str,
         arguments: dict[str, Any],
         *,
-        agent_id: str = "anonymous-agent",
-        confirmed: bool = False,
         dry_run: bool = False,
     ) -> Any:
-        allowed = PROFILE_PERMISSIONS[profile]
         spec = self.registry.get(name)
-        if not set(spec.permissions) <= allowed:
+        if not set(spec.permissions) <= self.permissions:
             raise CapabilityPermissionError(
-                f"capability is not available to profile: {profile.value}"
+                f"capability is not available to profile: {self.profile.value}"
             )
+        confirmed = False
         try:
             result = self.registry.execute(
                 name,
                 arguments,
-                permissions=allowed,
+                permissions=self.permissions,
                 confirmed=confirmed,
                 dry_run=dry_run,
             )
@@ -150,7 +165,7 @@ class McpAdapter:
             self.repository.record_adapter_invocation(
                 adapter="mcp",
                 actor_type="agent",
-                actor_id=agent_id,
+                actor_id=self.agent_id,
                 capability=name,
                 side_effect=spec.side_effect.value,
                 confirmed=confirmed,
@@ -160,7 +175,7 @@ class McpAdapter:
         self.repository.record_adapter_invocation(
             adapter="mcp",
             actor_type="agent",
-            actor_id=agent_id,
+            actor_id=self.agent_id,
             capability=name,
             side_effect=spec.side_effect.value,
             confirmed=confirmed,
