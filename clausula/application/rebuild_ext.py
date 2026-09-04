@@ -11,6 +11,18 @@ from .research_ingest import ResearchIngestionService
 class LedgerRebuilder(_BaseLedgerRebuilder):
     """Extend canonical rebuild with deterministic non-plain-text research extraction."""
 
+    def rebuild(self) -> dict[str, Any]:
+        result = super().rebuild()
+        # Raw `research-source` imports are immutable inputs. Their replay is
+        # owned by the later `research.ingest_source` event envelope, so the
+        # base rebuilder's generic unsupported-adapter diagnostic is expected.
+        result["warnings"] = [
+            warning
+            for warning in result.get("warnings", [])
+            if warning.get("adapter_name") != "research-source"
+        ]
+        return result
+
     def _replay_research_event(
         self,
         research: ResearchService,
