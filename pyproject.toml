@@ -13,6 +13,7 @@ research = ["pypdf>=5,<7"]
 
 [project.scripts]
 clausula = "clausula.cli:main"
+clausula-daemon = "clausula.api.daemon:main"
 clausula-workspace = "clausula.api.workspace:main"
 
 [tool.pytest.ini_options]
