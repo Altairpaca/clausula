@@ -80,15 +80,16 @@ def register_research_ingestion_capabilities(registry: CapabilityRegistry, repos
             "research.source_map",
             "Return the immutable locator map from normalized research text back to source pages/sections.",
             object_schema({"document_id": STRING}, required=("document_id",)),
-            {"type": ["object", "null"]},
+            {"type": "object"},
             "read",
             True,
             SideEffect.LOCAL_READ,
             ("research:read",),
             False,
-            "Returns audit-backed extraction provenance only.",
+            "Returns an audit-backed extraction map or an explicit unavailable status object.",
         ),
-        lambda document_id: service.source_map(document_id),
+        lambda document_id: service.source_map(document_id)
+        or {"document_id": document_id, "status": "unavailable", "segments": []},
     )
     registry.register(
         CapabilitySpec(
