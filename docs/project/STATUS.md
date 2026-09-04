@@ -1,21 +1,18 @@
 # Clausula Implementation Status
 
-- Snapshot date: 2026-08-26, Asia/Taipei
-- Repository: `/home/altair/projects/clausula`
-- Branch: `main`
-- Last frozen implementation: `f017c87 feat: add decision memory and reviews`
-- Current phase: M11 Recommendation and Attention implementation
-- M4 Policy as Code, M4.5 Planning/Cash Allocation, and M5.1 integrity remediation are frozen; M6 is in progress.
+- Snapshot date: 2026-09-04
+- Public branch: `main`
+- Stable domain baseline: M1–M5.1 frozen, M6 research/evidence graph implemented
+- Integration slices: M7 HTTP, M9 plugin bridge, and M10 MCP projection are local/partial and are not remote-security boundaries
+- Next product work: recommendation/attention and higher-level user surfaces
 
-## Frozen Milestones
+## Implemented baseline
 
-### M0 Archaeology
+### M0 — Legacy archaeology
 
-完成对旧 ClawAlpha 工作区、数据、状态、归档和迁移包的只读盘点。结果在
-`ARCHAEOLOGY.md`、`migration_inventory.yaml`、`data_asset_catalog.yaml`、
-`source_snapshot_manifest.yaml` 和 `capability_mapping.yaml`。没有把私人财务数据复制进 Git。
+The legacy ClawAlpha estate was inventoried read-only before migration. Public Git now retains only sanitized logical-source summaries and integrity hashes in `ARCHAEOLOGY.md`, `migration_inventory.yaml`, `data_asset_catalog.yaml`, `source_snapshot_manifest.yaml`, and `capability_mapping.yaml`. The complete per-file inventory and local scanner remain outside the public repository.
 
-### M1 Kernel
+### M1 — Kernel
 
 Frozen commits:
 
@@ -24,173 +21,70 @@ Frozen commits:
 b8622a3 feat: freeze auditable M1 kernel infrastructure
 ```
 
-已具备 UUID/Decimal/temporal contracts、typed repository ports、checksummed forward-only
-migrations、SHA-256 audit chain、content-addressed raw artifacts、verified backup/restore、
-canonical JSONL export、Capability Registry、permissions、confirmation、dry-run、CLI/SDK
-projection 和 architecture tests。
+Implemented contracts include UUID/Decimal/time semantics, typed repository ports, checksummed forward-only migrations, SHA-256 audit chaining, content-addressed raw artifacts, verified backup/restore, canonical JSONL export, Capability Registry, permissions, confirmation/dry-run handling, and architecture tests.
 
-### M2 Ledger
+### M2 — Ledger
 
-Frozen commit:
+Frozen commit `9b10390`. The ledger supports CSV/manual imports, transaction legs, strict as-of replay, multi-currency cash, FIFO lots, realized gain, fees in basis/proceeds, FX conversion, transfers with carried basis, splits, reconciliation, append-only correction, and clean rebuild from raw imports.
 
-```text
-9b10390 feat: complete auditable ledger vertical slice
-```
+### M3 — Market and Portfolio
 
-已具备 CSV/manual imports、交易和 leg、严格 as-of replay、多币种现金、FIFO lots、realized
-gain、费用计入 basis/proceeds、FX conversion、双边现金/证券转账、carried basis、split、
-typed reconciliation、append-only correction，以及从 raw imports 重建 clean database。
+Frozen commit `8f48bcf`. Implemented contracts include versioned daily price/FX datasets with provenance and quality states, effective/known cutoffs, append-only portfolio membership, Decimal valuation/allocation/exposure, explicit valuation gaps, TWR, Decimal XIRR/MWR, flow-adjusted drawdown, and point-in-time/fixed-vintage knowledge modes.
 
-### M3 Market and Portfolio
+Accepted ADRs: `0001`–`0004` under `docs/adr/`.
 
-Frozen commit:
+### M4 — Policy as Code
 
-```text
-8f48bcf feat: complete market and portfolio analytics vertical slice
-```
+Implemented: portfolio-owned versioned policies, fixed-schema Decimal rules, temporal version selection, deterministic evaluation and simulation, fail-closed incomplete valuation, semantic checksums, append-only persistence, rebuild/export/backup coverage, and permission/confirmation/dry-run tests.
 
-冻结前验证：65 tests passed；28 项架构/基础设施/能力定向测试通过；wheel 构建成功；
-隔离 virtualenv 安装后的 CLI 能发现 16 个 capabilities。
+Accepted references: `docs/adr/0005-policy-as-code-and-simulation.md` and `docs/reference/policy-rules.md`.
 
-已具备：
+### M4.5 — Planning and Cash Allocation
 
-- versioned daily price/FX CSV datasets、manifest JSON/hash、provider provenance；
-- accepted/suspect/rejected quality，冲突时禁止 silent fallback；
-- observed/effective 与 known cutoff，显式禁止 hindsight；
-- Portfolio 与 Account 分离，append-only temporal membership；
-- Portfolio create/membership 的 raw event envelope 和 clean rebuild；
-- Decimal valuation、allocation、concentration、currency exposure、valuation gaps；
-- incomplete valuation 不产生伪造 total/weights；
-- TWR、Decimal XIRR/MWR、flow-adjusted drawdown；
-- point-in-time 与 fixed-vintage performance knowledge modes；
-- market/portfolio capability、CLI、SDK、backup/export/rebuild coverage。
+Implemented: immutable plans/scenarios, deterministic cash funding, fee/tax estimates, projected states and constraint gaps, deterministic ranking, append-only persistence, canonical export/backup/rebuild, and CLI/SDK/capability projections.
 
-Accepted ADRs:
+Accepted references: `docs/adr/0006-deterministic-planning-and-cash-allocation.md` and `docs/reference/planning.md`.
 
-```text
-docs/adr/0001-kernel-financial-fact-contract.md
-docs/adr/0002-migrations-audit-backup-and-capabilities.md
-docs/adr/0003-ledger-lots-fx-and-corporate-actions.md
-docs/adr/0004-market-portfolio-temporal-analytics.md
-```
+### M5 / M5.1 — Decision Intelligence and Integrity Remediation
 
-### M4 Policy as Code
-
-M4 release candidate includes:
-
-- Portfolio-owned `InvestmentPolicy`, append-only `PolicyVersion`, and fixed-schema `PolicyRule`;
-- six Decimal-only rule types with inclusive boundaries and strict field shapes;
-- effective/known/recorded temporal selection with backdated anti-lookahead tests;
-- deterministic evaluation/evidence and fail-closed incomplete valuation;
-- deterministic base-currency-cash simulation with no Ledger or audit mutation;
-- stable semantic rule checksum, deterministic per-version rule IDs, and raw event IDs;
-- atomic raw/import/canonical/audit writes for create and append-version operations;
-- schema migration v6, append-only triggers, canonical export, backup/restore, and clean rebuild;
-- policy/version/rule rebuild ID maps and semantic comparisons;
-- `policy.create`, `policy.add_version`, `policy.list`, `policy.evaluate`, and `policy.simulate`;
-- permission, confirmation, dry-run, CLI, SDK, temporal, boundary, and adversarial tests.
-
-Policy evaluations remain deterministic ephemeral analytical outputs. They are not canonical facts and
-are not persisted in M4. Simulation is not a Plan, Recommendation, Decision, or Transaction.
-
-Accepted M4 references:
-
-```text
-docs/adr/0005-policy-as-code-and-simulation.md
-docs/reference/policy-rules.md
-```
-
-Release verification before freeze: 80 tests passed; Policy targeted tests, compile, diff, and YAML checks
-passed. Wheel build succeeded, and an isolated installed CLI discovered 21 capabilities and executed
-`policy.create`, `policy.evaluate`, and `policy.simulate` successfully.
-
-### M4.5 Planning and Cash Allocation
-
-M4.5 release candidate includes:
-
-- immutable Portfolio/PolicyVersion-owned `Plan` and named `PlanScenario` rows;
-- base-currency cash funding with deterministic fee and explicit tax estimates;
-- candidate actions, projected states, cash reserve gaps, target allocation gaps, and unresolved constraints;
-- deterministic ranking by feasibility, hard constraints, total constraints, combined costs, and stable key;
-- v7 append-only planning tables, canonical export, backup/restore, and clean rebuild semantic comparison;
-- `planning.compare`, `planning.create`, `planning.list`, and `planning.get` registry capabilities;
-- CLI/SDK projections, confirmation/dry-run/permission tests, and no-Ledger-mutation acceptance stories.
-
-Accepted M4.5 references:
-
-```text
-docs/adr/0006-deterministic-planning-and-cash-allocation.md
-docs/reference/planning.md
-```
-
-M4.5 verification: 85 tests passed; compile, diff, and YAML checks passed. The final wheel built
-successfully, and an isolated installed CLI discovered 25 capabilities and executed
-`planning.compare`, `planning.create`, and `planning.get` successfully.
-
-### M5 Decision Intelligence
-
-M5 frozen implementation includes immutable trade/non-trade Decisions, Alternatives,
-Assumptions, ExpectedOutcomes, InvalidationConditions, review schedules,
-Policy/Evidence/Transaction links, and separate process/outcome reviews. Schema
-v8, canonical export, backup/restore, clean rebuild, registry, CLI, SDK, and
-permission/confirmation/dry-run contracts cover the lifecycle. Transaction
-links never create or mutate Ledger facts.
+Implemented: immutable trade/non-trade decisions, alternatives, assumptions, expected outcomes, invalidation conditions, review schedules, links to policy/evidence/transactions, and separate process/outcome reviews. M5.1 closes integrity findings around ledger knowledge time, failed-import atomicity, portfolio ownership checks, backup verification, rebuild semantics, zero-action simulation, and strict alternative selection.
 
 Accepted reference: `docs/adr/0007-decision-memory-and-review.md`.
 
-### M5.1 Integrity Remediation
+### M6 — Research and Evidence Graph
 
-M5.1 closes the audit findings discovered after the M5 freeze: omitted ledger
-knowledge time no longer becomes the economic date, failed CSV imports roll back
-instrument creation, Decision policy and transaction links enforce Portfolio
-ownership, backup verification checks database-referenced raw members, Decision
-rebuild compares child semantics, zero-action policy simulation is explicit while
-planning hold scenarios remain valid, and non-boolean alternative selection is
-rejected. The regression suite covers these contracts.
+Implemented: immutable text ingestion, source artifact provenance, source-spanned claims/evidence, contradictions, append-only thesis revisions, typed graph links, deterministic temporal substring search, schema migrations, canonical export/backup, clean rebuild, CLI/SDK/Capability Registry integration, and acceptance tests.
 
-### M6 Research and Evidence Graph
+PDF parsing, network fetching, and vector search are outside the current slice.
 
-M6 local text graph is implemented: immutable text ingestion, source artifact
-provenance, source-spanned Claims and Evidence, explicit Contradictions, append-only
-Thesis revisions, typed graph links, deterministic temporal substring search, v9/v10
-schema migrations, canonical export/backup inclusion, clean rebuild mapping, CLI,
-SDK, Capability Registry, and acceptance tests. PDF parsing, web fetching and vector
-search remain outside this slice.
+## Partial integration surfaces
 
-M7 has a local-only HTTP projection in `clausula/api/http.py`. It serves capability
-discovery and structured POST execution with permission, confirmation and dry-run
-headers. It deliberately has no remote authentication or deployment contract yet.
+- **M7 HTTP**: local-only capability discovery/execution in `clausula/api/http.py`. No remote authentication or deployment contract exists yet.
+- **M9 Plugins**: manifest validation and an in-process capability bridge. Isolation, package discovery, secret/network scopes, and crash containment remain deferred.
+- **M10 MCP**: protocol-neutral profile projection in `clausula/adapters/mcp.py`. Concrete transport identity/token binding and invocation security remain deferred.
 
-M9 has manifest validation and a capability-only in-process bridge in
-`clausula/plugins/`. Plugin isolation, package discovery, secrets, network scopes
-and crash containment remain deferred.
+These surfaces must not be exposed as authenticated remote services merely because they carry permission/profile fields.
 
-M10 has a protocol-neutral MCP projection in `clausula/adapters/mcp.py` with
-research-read, portfolio-read, advisor and admin profiles. A concrete MCP SDK
-transport, token identity and invocation audit context remain deferred.
-
-## Known Cross-Cutting Risks
+## Known cross-cutting risks
 
 - Audit hashes are not externally signed; a privileged local attacker could rebuild the chain.
 - Backup bundles are integrity-protected but not encrypted.
-- SQLite is currently a single-user local writer; multi-process contention policy is not frozen.
-- Migration downgrade requires backup restore/export-import.
-- Historical identifier validity ranges and richer account/institution semantics are incomplete.
-- Short positions, jurisdiction-specific tax lots, mergers, spin-offs and cash-in-lieu are deferred.
-- Market core is CSV/local-provider based; network provider adapters and Parquet scale-out remain later work.
-- Content-addressed files can remain as harmless unreferenced bytes after an operating-system failure;
-  policy database provenance and canonical writes are transactional.
-- Performance uses raw daily close, not guaranteed total-return adjusted prices.
+- SQLite is a single-user local writer; a multi-process contention/daemon ownership policy is not frozen.
+- Migration downgrade relies on backup restore or export/import.
+- Historical identifier validity ranges and richer account/institution semantics remain incomplete.
+- Short positions, jurisdiction-specific tax lots, mergers, spin-offs, and cash-in-lieu remain deferred.
+- Market core is CSV/local-provider based; network provider adapters and Parquet scale-out remain future work.
+- Performance uses raw daily close and is not guaranteed to use total-return-adjusted prices.
 
-## Verification Commands
+## Verification
 
-Run from `/home/altair/projects/clausula`:
+Run from the repository root:
 
 ```bash
 git status --short
-pytest -q
-pytest -q tests/test_policy.py tests/test_policy_analytics.py
-python -m compileall -q clausula tests scripts
+python -m pytest -q
+python -m pytest -q tests/test_policy.py tests/test_policy_analytics.py
+python -m compileall -q clausula tests
 git diff --check
 ```
 
