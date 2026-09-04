@@ -25,9 +25,10 @@ def _age_days(known_as_of: str, evidence_known_at: str | None) -> int | None:
 class DecisionWorkspaceProjection:
     """SQLite-backed derived projection for the decision-first local workspace.
 
-    This projection composes existing append-only facts. It does not introduce a
-    second financial truth store. The only write is an explicit recommendation →
-    decision relationship recorded as a tamper-evident audit event.
+    The projection composes existing append-only facts. Relationship/review rows
+    that do not carry their own knowledge timestamp are bounded by the matching
+    audit-event append time so a later link cannot leak into an earlier snapshot.
+    The only write is explicit recommendation → decision lineage metadata.
     """
 
     def __init__(self, repository):
@@ -120,14 +121,18 @@ class DecisionWorkspaceProjection:
                       l.evidence_id,l.evidence_kind,l.relation,
                       COALESCE(e.known_at,c.known_at) AS evidence_known_at,
                       COALESCE(e.recorded_at,c.recorded_at) AS evidence_recorded_at,
-                      COALESCE(e.text,c.text) AS evidence_text
+                      COALESCE(e.text,c.text) AS evidence_text,
+                      a.occurred_at AS link_recorded_at
                FROM decision_evidence_links l
                JOIN decisions d ON d.id=l.decision_id
+               JOIN audit_events a
+                 ON a.object_type='decision_evidence_link' AND a.object_id=l.id
                LEFT JOIN research_evidence e ON e.id=l.evidence_id
                LEFT JOIN research_claims c ON c.id=l.evidence_id
                WHERE d.portfolio_id=? AND d.as_of<=? AND d.known_as_of<=?
+                 AND a.occurred_at<=?
                ORDER BY d.created_at DESC,l.id""",
-            (portfolio_id, effective_cutoff, knowledge_cutoff),
+            (portfolio_id, effective_cutoff, knowledge_cutoff, knowledge_cutoff),
         ).fetchall()
         items: list[dict[str, Any]] = []
         linked_claim_ids: set[str] = set()
@@ -148,6 +153,7 @@ class DecisionWorkspaceProjection:
                     "evidence_kind": row["evidence_kind"],
                     "relation": row["relation"],
                     "known_at": evidence_known_at,
+                    "link_recorded_at": row["link_recorded_at"],
                     "age_days": _age_days(knowledge_cutoff, evidence_known_at),
                     "text": row["evidence_text"],
                 }
@@ -217,10 +223,14 @@ class DecisionWorkspaceProjection:
         if decision_ids:
             placeholders = ",".join("?" for _ in decision_ids)
             reviews = self.db.execute(
-                f"""SELECT * FROM decision_reviews
-                     WHERE decision_id IN ({placeholders}) AND reviewed_at<=?
-                     ORDER BY reviewed_at,id""",
-                (*decision_ids, knowledge_cutoff),
+                f"""SELECT r.*,a.occurred_at AS append_recorded_at
+                     FROM decision_reviews r
+                     JOIN audit_events a
+                       ON a.object_type='decision_review' AND a.object_id=r.id
+                     WHERE r.decision_id IN ({placeholders})
+                       AND r.reviewed_at<=? AND a.occurred_at<=?
+                     ORDER BY r.reviewed_at,r.id""",
+                (*decision_ids, knowledge_cutoff, knowledge_cutoff),
             ).fetchall()
             for review in reviews:
                 reviews_by_key.setdefault(
@@ -290,6 +300,19 @@ class DecisionWorkspaceProjection:
             )
         return output
 
+    def _all_recommendation_decision_links(self, portfolio_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            """SELECT * FROM audit_events
+               WHERE object_type='recommendation_decision_link'
+               ORDER BY sequence"""
+        ).fetchall()
+        output = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if payload.get("portfolio_id") == portfolio_id:
+                output.append({"id": row["id"], "recorded_at": row["occurred_at"], **payload})
+        return output
+
     def add_recommendation_decision_link(
         self,
         recommendation_id: str,
@@ -307,11 +330,11 @@ class DecisionWorkspaceProjection:
         decision = self.repository.decision(decision_id)
         if recommendation["portfolio_id"] != decision["portfolio_id"]:
             raise ValueError("recommendation-decision link crosses portfolio boundary")
-        linked_time = canonical_timestamp(linked_at or now())
-        existing = self.recommendation_decision_links(
-            portfolio_id=decision["portfolio_id"], known_as_of=linked_time
-        )
-        for row in existing:
+        current_time = canonical_timestamp(now())
+        linked_time = canonical_timestamp(linked_at or current_time)
+        if linked_time > current_time:
+            raise ValueError("recommendation-decision linked_at cannot be in the future")
+        for row in self._all_recommendation_decision_links(decision["portfolio_id"]):
             if (
                 row["recommendation_id"] == recommendation_id
                 and row["decision_id"] == decision_id
@@ -333,7 +356,14 @@ class DecisionWorkspaceProjection:
                 object_id=new_id(),
                 payload=payload,
             )
-        return {"id": event_id, "recorded_at": linked_time, **payload}
+        row = self.db.execute(
+            "SELECT occurred_at FROM audit_events WHERE id=?", (event_id,)
+        ).fetchone()
+        return {
+            "id": event_id,
+            "recorded_at": row["occurred_at"] if row is not None else current_time,
+            **payload,
+        }
 
     def lineage(
         self,
@@ -350,6 +380,14 @@ class DecisionWorkspaceProjection:
         rec_by_decision: dict[str, list[dict[str, Any]]] = {}
         for link in links:
             rec_by_decision.setdefault(link["decision_id"], []).append(link)
+        recommendation_snapshot = {
+            row["id"]: row
+            for row in self.recommendations(
+                portfolio_id=portfolio_id,
+                as_of=effective_cutoff,
+                known_as_of=knowledge_cutoff,
+            )
+        }
         decisions = self.db.execute(
             """SELECT * FROM decisions
                WHERE portfolio_id=? AND as_of<=? AND known_as_of<=?
@@ -361,28 +399,34 @@ class DecisionWorkspaceProjection:
             transaction_links = [
                 dict(row)
                 for row in self.db.execute(
-                    """SELECT * FROM decision_transaction_links
-                       WHERE decision_id=? AND linked_at<=? ORDER BY linked_at,id""",
-                    (decision["id"], knowledge_cutoff),
+                    """SELECT l.*
+                       FROM decision_transaction_links l
+                       JOIN audit_events a
+                         ON a.object_type='decision_transaction_link' AND a.object_id=l.id
+                       WHERE l.decision_id=? AND l.linked_at<=? AND a.occurred_at<=?
+                       ORDER BY l.linked_at,l.id""",
+                    (decision["id"], knowledge_cutoff, knowledge_cutoff),
                 ).fetchall()
             ]
             reviews = [
                 dict(row)
                 for row in self.db.execute(
-                    """SELECT * FROM decision_reviews
-                       WHERE decision_id=? AND reviewed_at<=? ORDER BY reviewed_at,id""",
-                    (decision["id"], knowledge_cutoff),
+                    """SELECT r.*
+                       FROM decision_reviews r
+                       JOIN audit_events a
+                         ON a.object_type='decision_review' AND a.object_id=r.id
+                       WHERE r.decision_id=? AND r.reviewed_at<=? AND a.occurred_at<=?
+                       ORDER BY r.reviewed_at,r.id""",
+                    (decision["id"], knowledge_cutoff, knowledge_cutoff),
                 ).fetchall()
             ]
             recommendation_links = rec_by_decision.get(decision["id"], [])
             recommendations = []
             for link in recommendation_links:
-                try:
-                    recommendation = dict(
-                        self.repository.recommendation(link["recommendation_id"])
-                    )
-                except KeyError:
-                    recommendation = {"id": link["recommendation_id"], "status": "missing"}
+                recommendation = recommendation_snapshot.get(
+                    link["recommendation_id"],
+                    {"id": link["recommendation_id"], "status": "unavailable_at_cutoff"},
+                )
                 recommendations.append({"link": link, "recommendation": recommendation})
             output.append(
                 {
