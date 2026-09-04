@@ -7,7 +7,8 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from clausula.adapters.execution import ExecutionRepositoryProjection
-from clausula.application import CoreRepository
+from clausula.adapters.workspace import DecisionWorkspaceProjection
+from clausula.application import CoreRepository, DecisionWorkspaceService
 from clausula.application.cockpit import CapitalCockpitService
 from clausula.capabilities import (
     CapabilityError,
@@ -35,6 +36,11 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     registry = build_core_registry(repository)
     execution_repository = (
         ExecutionRepositoryProjection(repository) if hasattr(repository, "db") else None
+    )
+    decision_workspace = (
+        DecisionWorkspaceService(DecisionWorkspaceProjection(repository))
+        if hasattr(repository, "db")
+        else None
     )
     cockpit = CapitalCockpitService(
         repository, execution_repository=execution_repository
@@ -71,6 +77,17 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
                     payload = self._read_json_object()
                     with registry_lock:
                         result = cockpit.snapshot(**payload)
+                        if decision_workspace is not None:
+                            result["decision_workspace"] = decision_workspace.snapshot(
+                                payload["portfolio_id"],
+                                payload["as_of"],
+                                known_as_of=payload.get("known_as_of"),
+                            )
+                        else:
+                            result["decision_workspace"] = {
+                                "status": "unavailable",
+                                "reason": "decision workspace requires the local SQLite projection",
+                            }
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                     self._send_error(400, "invalid_snapshot_request", str(error))
                     return
