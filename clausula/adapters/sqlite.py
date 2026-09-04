@@ -205,6 +205,13 @@ APPEND_ONLY_TABLES = (
     "research_theses",
     "thesis_revisions",
     "research_links",
+    "identifier_validity_ranges",
+    "corporate_action_events",
+    "corporate_action_event_instruments",
+    "corporate_action_considerations",
+    "corporate_action_account_consequences",
+    "corporate_action_basis_allocations",
+    "corporate_action_tax_interpretations",
 )
 
 
