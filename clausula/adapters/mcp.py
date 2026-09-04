@@ -98,36 +98,47 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
 
 
 class McpAdapter:
-    """Profile-bound projection of registry capabilities for one MCP identity.
+    """Profile-bound invocation adapter plus optional read-only tool discovery.
 
-    The profile and actor identity are constructor configuration, not per-call
-    arguments. A transport may create one adapter after authenticating/binding a
-    client, but an individual tool invocation cannot upgrade itself to another
-    profile. Confirmation remains host-controlled; callers may dry-run but cannot
-    assert `confirmed=True` through this adapter.
+    Invocation authority is constructor-bound: a transport creates an adapter only
+    after binding an authenticated client to a profile and actor identity. For
+    compatibility, an unbound adapter may describe the tools visible to an
+    explicitly requested profile; discovery is read-only and cannot be used to
+    invoke anything. Confirmation remains host-controlled in all cases.
     """
 
     def __init__(
         self,
         repository: CoreRepository,
         *,
-        profile: McpProfile,
-        agent_id: str,
+        profile: McpProfile | None = None,
+        agent_id: str | None = None,
     ) -> None:
-        normalized_agent = str(agent_id).strip()
-        if not normalized_agent:
-            raise ValueError("agent_id cannot be empty")
         self.repository = repository
         self.registry: CapabilityRegistry = build_core_registry(repository)
+        if profile is None:
+            if agent_id is not None and str(agent_id).strip():
+                raise ValueError("agent_id requires a bound MCP profile")
+            self.profile: McpProfile | None = None
+            self.agent_id: str | None = None
+            self.permissions = frozenset()
+            return
+        normalized_agent = str(agent_id or "").strip()
+        if not normalized_agent:
+            raise ValueError("agent_id cannot be empty")
         self.profile = McpProfile(profile)
         self.agent_id = normalized_agent
         self.permissions = PROFILE_PERMISSIONS[self.profile]
 
-    def list_tools(self) -> list[McpTool]:
+    def list_tools(self, profile: McpProfile | None = None) -> list[McpTool]:
+        selected = self.profile if profile is None else McpProfile(profile)
+        if selected is None:
+            raise ValueError("profile is required for unbound MCP tool discovery")
+        allowed = PROFILE_PERMISSIONS[selected]
         tools = []
         for description in self.registry.describe():
             permissions = tuple(description["permissions"])
-            if set(permissions) <= self.permissions:
+            if set(permissions) <= allowed:
                 tools.append(
                     McpTool(
                         description["name"],
@@ -147,6 +158,10 @@ class McpAdapter:
         *,
         dry_run: bool = False,
     ) -> Any:
+        if self.profile is None or self.agent_id is None:
+            raise RuntimeError(
+                "MCP invocation requires a constructor-bound profile and agent_id"
+            )
         spec = self.registry.get(name)
         if not set(spec.permissions) <= self.permissions:
             raise CapabilityPermissionError(
