@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlparse
 
 from clausula.adapters.execution import ExecutionRepositoryProjection
 from clausula.application import CoreRepository
-from clausula.application.cockpit import CapitalCockpitService
+from clausula.application.cockpit_plus import IntelligentCapitalCockpitService
 from clausula.capabilities import (
     CapabilityError,
     CapabilityPermissionError,
@@ -36,8 +36,12 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     execution_repository = (
         ExecutionRepositoryProjection(repository) if hasattr(repository, "db") else None
     )
-    cockpit = CapitalCockpitService(
-        repository, execution_repository=execution_repository
+    cockpit = (
+        IntelligentCapitalCockpitService(
+            repository, execution_repository=execution_repository
+        )
+        if hasattr(repository, "db")
+        else None
     )
     registry_lock = threading.RLock()
 
@@ -67,6 +71,13 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             if path == "/workspace/snapshot":
+                if cockpit is None:
+                    self._send_error(
+                        501,
+                        "workspace_unavailable",
+                        "the decision workspace requires the local SQLite projection",
+                    )
+                    return
                 try:
                     payload = self._read_json_object()
                     with registry_lock:
