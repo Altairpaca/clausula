@@ -28,6 +28,7 @@ from .policy import PolicyService
 from .planning import PlanningError, PlanningService
 from .decision import DecisionError, DecisionService
 from .research import ResearchError, ResearchService
+from .research_ingest import ResearchIngestionService, ResearchExtractor, ExtractedDocument
 from .recommendation import RecommendationService
 from .execution import ExecutionContractError, ExecutionService
 from .decision_workspace import DecisionWorkspaceRepository, DecisionWorkspaceService
@@ -35,6 +36,7 @@ from .decision_workspace import DecisionWorkspaceRepository, DecisionWorkspaceSe
 __all__ = [
     "BenchmarkService",
     "CoreRepository",
+    "ExtractedDocument",
     "ImportValidationError",
     "LedgerRebuilder",
     "LedgerRepository",
@@ -54,6 +56,8 @@ __all__ = [
     "DecisionService",
     "RebuildError",
     "ResearchError",
+    "ResearchExtractor",
+    "ResearchIngestionService",
     "ResearchService",
     "RecommendationService",
     "ExecutionContractError",
