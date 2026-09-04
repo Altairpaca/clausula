@@ -40,6 +40,7 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "planning:read",
             "decision:read",
             "execution:read",
+            "recommendation:read",
         }
     ),
     McpProfile.ADVISOR: frozenset(
@@ -54,6 +55,7 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "research:read",
             "research:write",
             "recommendation:create",
+            "recommendation:read",
         }
     ),
     McpProfile.ADMIN: frozenset(
@@ -74,6 +76,9 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "execution:write",
             "research:read",
             "research:write",
+            "recommendation:create",
+            "recommendation:read",
+            "recommendation:write",
             "system:read",
             "system:export",
             "system:backup",
