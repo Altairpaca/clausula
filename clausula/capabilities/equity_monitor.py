@@ -103,6 +103,19 @@ def register_equity_monitor_capabilities(registry: CapabilityRegistry, repositor
             portfolio_id=portfolio_id, instrument_id=instrument_id
         ),
     )
+
+    def active_case(case_id: str, as_of: str, known_as_of: str | None = None):
+        result = service.active(case_id, as_of, known_as_of=known_as_of)
+        if result is not None:
+            return result
+        return {
+            "status": "unavailable",
+            "case_id": case_id,
+            "as_of": as_of,
+            "known_as_of": known_as_of,
+            "reason": "no equity-case version is visible at the requested effective/knowledge cutoff",
+        }
+
     registry.register(
         CapabilitySpec(
             "equity_case.active",
@@ -111,17 +124,15 @@ def register_equity_monitor_capabilities(registry: CapabilityRegistry, repositor
                 {"case_id": STRING, "as_of": STRING, "known_as_of": NULLABLE_STRING},
                 required=("case_id", "as_of"),
             ),
-            {"type": ["object", "null"]},
+            {"type": "object"},
             "read",
             True,
             SideEffect.LOCAL_READ,
             ("equity:read",),
             False,
-            "Uses strict effective and knowledge cutoffs; later thesis updates cannot leak backward.",
+            "Uses strict effective and knowledge cutoffs; later thesis updates cannot leak backward. Missing visible state is an explicit unavailable object.",
         ),
-        lambda case_id, as_of, known_as_of=None: service.active(
-            case_id, as_of, known_as_of=known_as_of
-        ),
+        active_case,
     )
     registry.register(
         CapabilitySpec(
