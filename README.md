@@ -2,6 +2,10 @@
 
 Clausula is a local-first, deterministic investment decision system. It provides versioned ledgers, portfolios, market data, investment policies, planning, decision memory, research evidence, recommendation lifecycle management, and material-attention tracking without making an LLM the system of record.
 
+<p align="center">
+  <img src="docs/assets/system-map.svg" alt="Clausula deterministic investment decision system map" width="96%">
+</p>
+
 ## Why Clausula
 
 - Financial calculations use deterministic Python services and `Decimal`.
