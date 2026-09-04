@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from clausula.application import CoreRepository
+from clausula.application.cockpit import CapitalCockpitService
 from clausula.capabilities import (
     CapabilityError,
     CapabilityPermissionError,
@@ -31,6 +32,7 @@ HTML_CSP = (
 
 def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     registry = build_core_registry(repository)
+    cockpit = CapitalCockpitService(repository)
     registry_lock = threading.RLock()
 
     class CapabilityHandler(BaseHTTPRequestHandler):
@@ -57,16 +59,24 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
             self._send_error(404, "not_found", "resource not found")
 
         def do_POST(self) -> None:
-            prefix = "/capabilities/"
             path = urlparse(self.path).path
+            if path == "/workspace/snapshot":
+                try:
+                    payload = self._read_json_object()
+                    with registry_lock:
+                        result = cockpit.snapshot(**payload)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    self._send_error(400, "invalid_snapshot_request", str(error))
+                    return
+                self._send(200, result)
+                return
+
+            prefix = "/capabilities/"
             if not path.startswith(prefix):
                 self._send_error(404, "not_found", "resource not found")
                 return
             try:
-                size = int(self.headers.get("Content-Length", "0"))
-                payload = json.loads(self.rfile.read(size) or b"{}")
-                if not isinstance(payload, dict):
-                    raise ValueError("request body must be a JSON object")
+                payload = self._read_json_object()
                 with registry_lock:
                     result = registry.execute(
                         unquote(path.removeprefix(prefix)),
@@ -88,6 +98,13 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
 
         def log_message(self, format: str, *args: Any) -> None:
             return
+
+        def _read_json_object(self) -> dict[str, Any]:
+            size = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(size) or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("request body must be a JSON object")
+            return payload
 
         def _permissions(self) -> tuple[str, ...]:
             return tuple(
