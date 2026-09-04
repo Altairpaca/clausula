@@ -6,10 +6,12 @@ import threading
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from clausula.adapters.equity_case import EquityCaseProjection
 from clausula.adapters.execution import ExecutionRepositoryProjection
 from clausula.adapters.workspace import DecisionWorkspaceProjection
 from clausula.application import CoreRepository, DecisionWorkspaceService
 from clausula.application.cockpit import CapitalCockpitService
+from clausula.application.equity_monitor import EquityCaseService
 from clausula.capabilities import (
     CapabilityError,
     CapabilityPermissionError,
@@ -39,6 +41,11 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     )
     decision_workspace = (
         DecisionWorkspaceService(DecisionWorkspaceProjection(repository))
+        if hasattr(repository, "db")
+        else None
+    )
+    equity_monitor = (
+        EquityCaseService(EquityCaseProjection(repository))
         if hasattr(repository, "db")
         else None
     )
@@ -87,6 +94,17 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
                             result["decision_workspace"] = {
                                 "status": "unavailable",
                                 "reason": "decision workspace requires the local SQLite projection",
+                            }
+                        if equity_monitor is not None:
+                            result["equity_monitor"] = equity_monitor.portfolio_snapshot(
+                                payload["portfolio_id"],
+                                payload["as_of"],
+                                known_as_of=payload.get("known_as_of"),
+                            )
+                        else:
+                            result["equity_monitor"] = {
+                                "status": "unavailable",
+                                "reason": "equity monitor requires the local SQLite projection",
                             }
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                     self._send_error(400, "invalid_snapshot_request", str(error))
