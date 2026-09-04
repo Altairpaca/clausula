@@ -20,6 +20,13 @@ from clausula.capabilities import (
 )
 from clausula.ui import workspace_document
 
+from .auth import (
+    AuthenticationError,
+    ConfirmationChallengeError,
+    LocalAuthRegistry,
+    LocalPrincipal,
+)
+
 
 HTML_CSP = (
     "default-src 'self'; "
@@ -34,8 +41,15 @@ HTML_CSP = (
 )
 
 
-def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
+def create_server(
+    repository: CoreRepository,
+    *,
+    auth: LocalAuthRegistry | None = None,
+) -> ThreadingHTTPServer:
+    """Create the loopback projection with one process-local auth/write owner."""
+
     registry = build_core_registry(repository)
+    auth_registry = auth or LocalAuthRegistry.ephemeral_default()
     execution_repository = (
         ExecutionRepositoryProjection(repository) if hasattr(repository, "db") else None
     )
@@ -52,6 +66,9 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     cockpit = CapitalCockpitService(
         repository, execution_repository=execution_repository
     )
+    # This lock is the daemon's single in-process capability owner. A later Unix
+    # socket/process-lock layer can prevent a second OS process from opening the
+    # same writable database; callers of this server cannot bypass this owner.
     registry_lock = threading.RLock()
 
     class CapabilityHandler(BaseHTTPRequestHandler):
@@ -80,62 +97,179 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             if path == "/workspace/snapshot":
-                try:
-                    payload = self._read_json_object()
-                    with registry_lock:
-                        result = cockpit.snapshot(**payload)
-                        if decision_workspace is not None:
-                            result["decision_workspace"] = decision_workspace.snapshot(
-                                payload["portfolio_id"],
-                                payload["as_of"],
-                                known_as_of=payload.get("known_as_of"),
-                            )
-                        else:
-                            result["decision_workspace"] = {
-                                "status": "unavailable",
-                                "reason": "decision workspace requires the local SQLite projection",
-                            }
-                        if equity_monitor is not None:
-                            result["equity_monitor"] = equity_monitor.portfolio_snapshot(
-                                payload["portfolio_id"],
-                                payload["as_of"],
-                                known_as_of=payload.get("known_as_of"),
-                            )
-                        else:
-                            result["equity_monitor"] = {
-                                "status": "unavailable",
-                                "reason": "equity monitor requires the local SQLite projection",
-                            }
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-                    self._send_error(400, "invalid_snapshot_request", str(error))
-                    return
-                self._send(200, result)
+                self._workspace_snapshot()
                 return
-
+            if path == "/confirmations/challenge":
+                self._issue_confirmation_challenge()
+                return
             prefix = "/capabilities/"
-            if not path.startswith(prefix):
-                self._send_error(404, "not_found", "resource not found")
+            if path.startswith(prefix):
+                self._invoke_capability(unquote(path.removeprefix(prefix)))
                 return
+            self._send_error(404, "not_found", "resource not found")
+
+        def _workspace_snapshot(self) -> None:
+            # Intentionally anonymous and read-only. This route bypasses the
+            # capability write surface and exposes only deterministic projections.
             try:
                 payload = self._read_json_object()
                 with registry_lock:
-                    result = registry.execute(
-                        unquote(path.removeprefix(prefix)),
-                        payload,
-                        permissions=self._permissions(),
-                        confirmed=self.headers.get("X-Clausula-Confirmed") == "true",
-                        dry_run=self.headers.get("X-Clausula-Dry-Run") == "true",
+                    result = cockpit.snapshot(**payload)
+                    if decision_workspace is not None:
+                        result["decision_workspace"] = decision_workspace.snapshot(
+                            payload["portfolio_id"],
+                            payload["as_of"],
+                            known_as_of=payload.get("known_as_of"),
+                        )
+                    else:
+                        result["decision_workspace"] = {
+                            "status": "unavailable",
+                            "reason": "decision workspace requires the local SQLite projection",
+                        }
+                    if equity_monitor is not None:
+                        result["equity_monitor"] = equity_monitor.portfolio_snapshot(
+                            payload["portfolio_id"],
+                            payload["as_of"],
+                            known_as_of=payload.get("known_as_of"),
+                        )
+                    else:
+                        result["equity_monitor"] = {
+                            "status": "unavailable",
+                            "reason": "equity monitor requires the local SQLite projection",
+                        }
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                self._send_error(400, "invalid_snapshot_request", str(error))
+                return
+            self._send(200, result)
+
+        def _issue_confirmation_challenge(self) -> None:
+            try:
+                principal = self._principal()
+                request = self._read_json_object()
+                capability = str(request.get("capability") or "").strip()
+                arguments = request.get("arguments")
+                if not capability or not isinstance(arguments, dict):
+                    raise ValueError("capability and object arguments are required")
+                with registry_lock:
+                    spec = registry.get(capability)
+                    # A dry-run validates both permission and input schema without
+                    # executing any side effect or bypassing the future challenge.
+                    registry.execute(
+                        capability,
+                        arguments,
+                        permissions=principal.permissions,
+                        dry_run=True,
                     )
+                if not spec.confirmation_required:
+                    raise ValueError("capability does not require confirmation")
+                challenge = auth_registry.issue_challenge(
+                    principal, capability, arguments
+                )
+            except AuthenticationError as error:
+                self._send_error(401, "authentication_required", str(error))
+                return
             except CapabilityPermissionError as error:
                 self._send_error(403, "permission_denied", str(error))
                 return
+            except (CapabilityError, ValueError, json.JSONDecodeError) as error:
+                self._send_error(400, "invalid_confirmation_request", str(error))
+                return
+            self._send(
+                200,
+                {
+                    "challenge": challenge.nonce,
+                    "capability": challenge.capability,
+                    "principal_id": challenge.principal_id,
+                    "request_sha256": challenge.request_sha256,
+                    "expires_in_seconds": auth_registry.challenge_ttl_seconds,
+                },
+            )
+
+        def _invoke_capability(self, name: str) -> None:
+            principal: LocalPrincipal | None = None
+            spec = None
+            dry_run = self.headers.get("X-Clausula-Dry-Run") == "true"
+            try:
+                principal = self._principal()
+                payload = self._read_json_object()
+                with registry_lock:
+                    spec = registry.get(name)
+                    confirmed = False
+                    if spec.confirmation_required and not dry_run:
+                        auth_registry.consume_challenge(
+                            self.headers.get("X-Clausula-Confirmation"),
+                            principal,
+                            name,
+                            payload,
+                        )
+                        confirmed = True
+                    result = registry.execute(
+                        name,
+                        payload,
+                        permissions=principal.permissions,
+                        confirmed=confirmed,
+                        dry_run=dry_run,
+                    )
+                self._record_invocation(principal, name, spec.side_effect.value, confirmed, True)
+            except AuthenticationError as error:
+                self._send_error(401, "authentication_required", str(error))
+                return
+            except CapabilityPermissionError as error:
+                if principal is not None and spec is not None:
+                    self._record_invocation(
+                        principal, name, spec.side_effect.value, False, False
+                    )
+                self._send_error(403, "permission_denied", str(error))
+                return
+            except ConfirmationChallengeError as error:
+                if principal is not None and spec is not None:
+                    self._record_invocation(
+                        principal, name, spec.side_effect.value, False, False
+                    )
+                self._send_error(409, "confirmation_required", str(error))
+                return
             except ConfirmationRequired as error:
+                if principal is not None and spec is not None:
+                    self._record_invocation(
+                        principal, name, spec.side_effect.value, False, False
+                    )
                 self._send_error(409, "confirmation_required", str(error))
                 return
             except (CapabilityError, ValueError, json.JSONDecodeError) as error:
+                if principal is not None and spec is not None:
+                    self._record_invocation(
+                        principal, name, spec.side_effect.value, False, False
+                    )
                 self._send_error(400, "invalid_request", str(error))
                 return
             self._send(200, result)
+
+        def _record_invocation(
+            self,
+            principal: LocalPrincipal,
+            capability: str,
+            side_effect: str,
+            confirmed: bool,
+            succeeded: bool,
+        ) -> None:
+            recorder = getattr(repository, "record_adapter_invocation", None)
+            if recorder is None:
+                return
+            with registry_lock:
+                recorder(
+                    adapter="http",
+                    actor_type="principal",
+                    actor_id=principal.principal_id,
+                    capability=capability,
+                    side_effect=side_effect,
+                    confirmed=confirmed,
+                    succeeded=succeeded,
+                )
+
+        def _principal(self) -> LocalPrincipal:
+            return auth_registry.authenticate_bearer(
+                self.headers.get("Authorization")
+            )
 
         def log_message(self, format: str, *args: Any) -> None:
             return
@@ -146,13 +280,6 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
             if not isinstance(payload, dict):
                 raise ValueError("request body must be a JSON object")
             return payload
-
-        def _permissions(self) -> tuple[str, ...]:
-            return tuple(
-                item.strip()
-                for item in self.headers.get("X-Clausula-Permissions", "").split(",")
-                if item.strip()
-            )
 
         def _common_headers(self) -> None:
             self.send_header("Cache-Control", "no-store")
@@ -182,4 +309,8 @@ def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
         def _send_error(self, status: int, code: str, message: str) -> None:
             self._send(status, {"error": code, "message": message})
 
-    return ThreadingHTTPServer(("127.0.0.1", 0), CapabilityHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), CapabilityHandler)
+    # Process-local bootstrap access for CLI/workspace launchers and tests. There
+    # is deliberately no HTTP endpoint that returns these bearer tokens.
+    server.clausula_auth = auth_registry  # type: ignore[attr-defined]
+    return server
