@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
 import threading
 
@@ -158,9 +159,15 @@ def test_web_capture_has_no_browser_session_and_captures_response_metadata(tmp_p
     ).fetchone()
     assert audit is not None
     event_artifact = store.db.execute(
-        "SELECT path FROM artifacts WHERE path='manual://research-ingest-source'"
+        """SELECT a.path,d.source_path FROM artifacts a
+           JOIN artifact_details d ON d.artifact_id=a.id
+           WHERE d.source_path='manual://research-ingest-source'"""
     ).fetchone()
     assert event_artifact is not None
+    event = json.loads((store.root / event_artifact["path"]).read_text(encoding="utf-8"))
+    assert event["capture"]["etag"] == '"fixture-v1"'
+    assert event["capture"]["requested_url"] == url
+    assert event["capture"]["content_type"] == "text/html"
 
 
 def test_malformed_pdf_fails_without_creating_research_document(tmp_path: Path) -> None:
