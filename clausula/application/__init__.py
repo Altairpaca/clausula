@@ -1,8 +1,8 @@
 """Canonical application services."""
 
-# Compose optimized concrete read services before importing downstream modules.
-# The original service modules remain the semantic baseline; the optimized
-# subclasses inherit all writes and replace only bounded read/replay methods.
+# Compose optimized/extended concrete services before importing downstream
+# modules. Baseline modules remain semantic references; subclasses replace only
+# bounded read paths or add deterministic replay support.
 from .ledger import ImportValidationError
 from .ledger_fast import LedgerService
 from . import ledger as _ledger_module
@@ -10,7 +10,8 @@ from . import ledger as _ledger_module
 _ledger_module.LedgerService = LedgerService
 
 from .ports import CoreRepository, LedgerRepository
-from .rebuild import LedgerRebuilder, RebuildError
+from .rebuild import RebuildError
+from .rebuild_ext import LedgerRebuilder
 from .market import MarketImportError, MarketService
 from .market_provider import (
     MarketProvider,
