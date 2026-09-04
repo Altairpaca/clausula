@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "status": "public_summary",
+  "privacy": "The complete per-file migration inventory is retained locally and must not be committed to the public repository.",
+  "approved_sources": [
+    "clawalpha_repository",
+    "clawalpha_data",
+    "clawalpha_state",
+    "clawalpha_artifacts",
+    "clawalpha_archive",
+    "migration"
+  ],
+  "classification_contract": [
+    "MIGRATE_AS_IS",
+    "MIGRATE_WITH_REWRITE",
+    "ARCHIVE",
+    "IGNORE"
+  ],
+  "public_evidence": {
+    "snapshot_manifest": "source_snapshot_manifest.yaml",
+    "asset_catalog": "data_asset_catalog.yaml",
+    "capability_mapping": "capability_mapping.yaml"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "generated_at": "2026-08-19T05:27:45+00:00",
+  "privacy": {
+    "policy": "Real personal data and the complete legacy inventory remain outside Git and are imported only into local Clausula state.",
+    "catalog_content": "Public logical asset classes and migration decisions only; no local paths or filenames."
+  },
+  "asset_classes": [
+    {
+      "name": "canonical_market_series",
+      "decision": "MIGRATE_AS_IS after hash/schema validation; preserve as a versioned legacy dataset."
+    },
+    {
+      "name": "instrument_metadata",
+      "decision": "MIGRATE_WITH_REWRITE into stable instruments plus historical identifiers."
+    },
+    {
+      "name": "research_evidence_database",
+      "decision": "MIGRATE_WITH_REWRITE through validated intermediate records."
+    },
+    {
+      "name": "legacy_repository_bundles",
+      "decision": "REFERENCE_ONLY for code; any private data migration requires explicit local ETL review."
+    }
+  ]
+}
