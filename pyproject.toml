@@ -5,11 +5,40 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "clausula"
 version = "0.1.0"
+description = "Local-first deterministic investment decision system with point-in-time provenance and auditable workflows"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
+authors = [
+  { name = "Altair Li" },
+]
+keywords = [
+  "investment",
+  "portfolio",
+  "personal-finance",
+  "decision-support",
+  "local-first",
+  "point-in-time",
+  "audit",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
 dependencies = []
 
 [project.optional-dependencies]
 research = ["pypdf>=5,<7"]
+
+[project.urls]
+Repository = "https://github.com/Altairpaca/clausula"
+Issues = "https://github.com/Altairpaca/clausula/issues"
 
 [project.scripts]
 clausula = "clausula.cli:main"
