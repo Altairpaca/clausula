@@ -10,6 +10,9 @@ from clausula.capabilities import ConfirmationRequired, build_core_registry
 from clausula.ui import workspace_document
 
 
+CURRENT_VIEW = "2100-01-01"
+
+
 def _fixture(tmp_path):
     store = Store(tmp_path / "home")
     portfolio = PortfolioService(store).create("Household", "USD", created_at="2026-01-01")
@@ -39,7 +42,7 @@ def _fixture(tmp_path):
     return store, portfolio, decision, recommendation
 
 
-def test_decision_workspace_composes_actionable_surfaces(tmp_path) -> None:
+def test_decision_workspace_composes_actionable_surfaces_without_hindsight(tmp_path) -> None:
     store, portfolio, decision, recommendation = _fixture(tmp_path)
     projection = DecisionWorkspaceProjection(store)
     workspace = DecisionWorkspaceService(projection)
@@ -105,8 +108,6 @@ def test_decision_workspace_composes_actionable_surfaces(tmp_path) -> None:
         decision["id"], counter["id"], evidence_kind="claim", relation="contradicts"
     )
 
-    # Persist one genuinely material local signal. Existing attention records do
-    # not yet require portfolio scope, so the workspace labels it global.
     AttentionService(store).evaluate(
         event_key="liquidity-change",
         event_type="evidence_change",
@@ -116,29 +117,43 @@ def test_decision_workspace_composes_actionable_surfaces(tmp_path) -> None:
         occurred_at="2026-01-06",
     )
 
-    result = workspace.snapshot(
+    # The canonical recommendation and decision were knowable in early 2026,
+    # but the evidence links, attention event and explicit lineage were appended
+    # later by this test run. Backdating their business time must not make them
+    # visible in an earlier knowledge snapshot.
+    historical = workspace.snapshot(
         portfolio,
         "2026-02-01",
         known_as_of="2026-02-01",
     )
+    assert historical["recommendation_inbox"][0]["id"] == recommendation["id"]
+    assert historical["attention"] == []
+    assert historical["evidence"]["linked_evidence"] == 0
+    assert historical["lineage"][0]["recommendations"] == []
 
-    assert result["recommendation_inbox"][0]["id"] == recommendation["id"]
-    assert result["attention"][0]["scope"] == "global"
-    assert result["evidence"]["status"] == "pressure"
-    assert result["evidence"]["contradicting_links"] == 1
-    assert result["evidence"]["explicit_contradictions"] == 1
-    assert result["reviews_due"][0]["decision_id"] == decision["id"]
-    assert result["lineage"][0]["recommendations"][0]["link"]["relation"] == "considered_in"
-    assert result["lineage"][0]["stage"] == "decided"
+    current = workspace.snapshot(
+        portfolio,
+        CURRENT_VIEW,
+        known_as_of=CURRENT_VIEW,
+    )
+    assert current["attention"][0]["scope"] == "global"
+    assert current["evidence"]["status"] == "pressure"
+    assert current["evidence"]["contradicting_links"] == 1
+    assert current["evidence"]["explicit_contradictions"] == 1
+    assert current["reviews_due"][0]["decision_id"] == decision["id"]
+    assert current["lineage"][0]["recommendations"][0]["link"]["relation"] == "considered_in"
+    assert current["lineage"][0]["stage"] == "decided"
 
 
-def test_review_queue_becomes_completed_only_after_due_review(tmp_path) -> None:
+def test_review_queue_uses_append_time_as_knowledge_boundary(tmp_path) -> None:
     store, portfolio, decision, _ = _fixture(tmp_path)
     service = DecisionWorkspaceService(DecisionWorkspaceProjection(store))
 
     before = service.snapshot(portfolio, "2026-02-01", known_as_of="2026-02-01")
     assert before["review_queue"][0]["status"] == "due"
 
+    # The review is about 2026-02-02 but is appended now. A historical snapshot
+    # immediately after its business date must still not know about it.
     DecisionService(store).review(
         decision["id"],
         "process",
@@ -146,10 +161,18 @@ def test_review_queue_becomes_completed_only_after_due_review(tmp_path) -> None:
         "The decision respected the reserve constraint.",
         reviewed_at="2026-02-02",
     )
-    after = service.snapshot(portfolio, "2026-02-03", known_as_of="2026-02-03")
-    assert after["review_queue"][0]["status"] == "completed"
-    assert after["reviews_due"] == []
-    assert after["lineage"][0]["stage"] == "reviewed"
+    historical_after = service.snapshot(
+        portfolio, "2026-02-03", known_as_of="2026-02-03"
+    )
+    assert historical_after["review_queue"][0]["status"] == "due"
+    assert historical_after["lineage"][0]["stage"] == "decided"
+
+    current_after = service.snapshot(
+        portfolio, CURRENT_VIEW, known_as_of=CURRENT_VIEW
+    )
+    assert current_after["review_queue"][0]["status"] == "completed"
+    assert current_after["reviews_due"] == []
+    assert current_after["lineage"][0]["stage"] == "reviewed"
 
 
 def test_workspace_capabilities_and_ui_are_composed(tmp_path) -> None:
