@@ -754,6 +754,95 @@ class Store:
             raise KeyError(f"unknown instrument: {instrument_id}")
         return row
 
+    def register_identifier_range(
+        self,
+        *,
+        instrument_id: str,
+        scheme: str,
+        value: str,
+        valid_from: str,
+        valid_to: str | None,
+        known_at: str,
+        recorded_at: str,
+        provenance: str,
+    ) -> str:
+        self.instrument_details(instrument_id)
+        normalized_scheme = str(scheme).strip().lower()
+        normalized_value = str(value).strip()
+        if not normalized_scheme or not normalized_value:
+            raise ValueError("identifier scheme and value cannot be empty")
+        normalized_from = canonical_timestamp(valid_from)
+        normalized_to = None if valid_to is None else canonical_timestamp(valid_to)
+        normalized_known = canonical_timestamp(known_at)
+        normalized_recorded = canonical_timestamp(recorded_at)
+        if normalized_to is not None and normalized_to <= normalized_from:
+            raise ValueError("valid_to must be after valid_from")
+        if normalized_known > normalized_recorded:
+            raise ValueError("known_at cannot be after recorded_at")
+        if not str(provenance).strip():
+            raise ValueError("provenance cannot be empty")
+        range_id = new_id()
+        with self.write_transaction():
+            self.db.execute(
+                "INSERT INTO identifier_validity_ranges"
+                "(id,instrument_id,scheme,value,valid_from,valid_to,known_at,recorded_at,provenance)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    range_id,
+                    instrument_id,
+                    normalized_scheme,
+                    normalized_value,
+                    normalized_from,
+                    normalized_to,
+                    normalized_known,
+                    normalized_recorded,
+                    str(provenance).strip(),
+                ),
+            )
+            append_audit_event(
+                self.db,
+                operation="identifier.register_range",
+                object_type="identifier_validity_range",
+                object_id=range_id,
+                payload={
+                    "instrument_id": instrument_id,
+                    "scheme": normalized_scheme,
+                    "value": normalized_value,
+                    "valid_from": normalized_from,
+                    "valid_to": normalized_to,
+                    "known_at": normalized_known,
+                    "provenance": str(provenance).strip(),
+                },
+            )
+        return range_id
+
+    def resolve_identifier_at(
+        self,
+        *,
+        scheme: str,
+        value: str,
+        as_of: str,
+        known_as_of: str,
+    ) -> str | None:
+        normalized_scheme = str(scheme).strip().lower()
+        normalized_value = str(value).strip()
+        effective = canonical_timestamp(as_of)
+        knowledge = canonical_timestamp(known_as_of)
+        rows = self.db.execute(
+            """SELECT instrument_id FROM identifier_validity_ranges
+               WHERE scheme=? AND value=? AND valid_from<=? AND known_at<=?
+                 AND (valid_to IS NULL OR valid_to>?)
+               ORDER BY valid_from, recorded_at, id""",
+            (normalized_scheme, normalized_value, effective, knowledge, effective),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise ValueError(
+                f"multiple active identifier ranges for {normalized_scheme}:{normalized_value} at {effective}"
+            )
+        return rows[0]["instrument_id"]
+
     def add_market_dataset(
         self,
         dataset: DatasetVersion,
