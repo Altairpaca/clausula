@@ -194,22 +194,34 @@ def create_server(
                 payload = self._read_json_object()
                 with registry_lock:
                     spec = registry.get(name)
-                    confirmed = False
-                    if spec.confirmation_required and not dry_run:
-                        auth_registry.consume_challenge(
-                            self.headers.get("X-Clausula-Confirmation"),
-                            principal,
-                            name,
-                            payload,
-                        )
-                        confirmed = True
-                    result = registry.execute(
+                    # Permission and schema validation happen before confirmation.
+                    # An unauthorized caller must not learn or satisfy the
+                    # confirmation protocol for a capability it cannot invoke.
+                    preflight = registry.execute(
                         name,
                         payload,
                         permissions=principal.permissions,
-                        confirmed=confirmed,
-                        dry_run=dry_run,
+                        dry_run=True,
                     )
+                    if dry_run:
+                        result = preflight
+                        confirmed = False
+                    else:
+                        confirmed = False
+                        if spec.confirmation_required:
+                            auth_registry.consume_challenge(
+                                self.headers.get("X-Clausula-Confirmation"),
+                                principal,
+                                name,
+                                payload,
+                            )
+                            confirmed = True
+                        result = registry.execute(
+                            name,
+                            payload,
+                            permissions=principal.permissions,
+                            confirmed=confirmed,
+                        )
                 self._record_invocation(principal, name, spec.side_effect.value, confirmed, True)
             except AuthenticationError as error:
                 self._send_error(401, "authentication_required", str(error))
