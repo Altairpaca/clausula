@@ -7,7 +7,7 @@ Clausula is a local-first, deterministic investment decision system. It provides
 - Financial calculations use deterministic Python services and `Decimal`.
 - Historical facts are append-only and retain source provenance.
 - As-of queries distinguish `effective_at`, `known_at`, and `recorded_at` to make look-ahead explicit.
-- Agent, MCP, HTTP, CLI, and SDK surfaces project the same capability registry instead of owning financial state.
+- Agent, MCP, HTTP, CLI, SDK, and local workspace surfaces project the same deterministic application state instead of owning financial truth.
 - Version 0.x does not place brokerage orders autonomously.
 
 ## Quick start
@@ -25,7 +25,12 @@ clausula system check
 
 # Create a local account; commands return structured JSON.
 clausula account create DemoInstitution "Paper Account"
+
+# Open the loopback-only, read-only Capital Cockpit UI.
+clausula-workspace
 ```
+
+The Capital Cockpit is intentionally decision-first: it keeps `as_of` and `known_as_of` visible and surfaces valuation completeness, allocation/concentration, policy boundaries, data gaps, persisted plans, and decision memory. The UI itself exposes no write controls; the underlying 0.x HTTP capability projection remains a local integration surface rather than a remote authentication boundary.
 
 Run the verification suite before changing domain or persistence contracts:
 
@@ -44,7 +49,7 @@ git diff --check
 | `clausula/analytics` | portfolio, policy, planning, performance and cost-basis calculations |
 | `clausula/adapters` | SQLite, backup, audit, migrations and MCP projections |
 | `clausula/capabilities` | permissioned capability registry shared by external surfaces |
-| `clausula/api`, `cli.py`, `sdk.py` | HTTP, CLI and Python projections |
+| `clausula/api`, `clausula/ui`, `cli.py`, `sdk.py` | local HTTP/workspace, CLI and Python projections |
 
 The current implementation includes the kernel, ledger, market and portfolio analytics, policy-as-code, deterministic planning, decision memory, a local research evidence graph, an append-only recommendation lifecycle, and deterministic material-attention persistence. See [`docs/project/STATUS.md`](docs/project/STATUS.md) for frozen milestones, verification evidence, deferred capabilities, and known risks.
 
