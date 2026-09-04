@@ -1016,9 +1016,40 @@ class LedgerService:
                 source_qty[item.instrument_id] = dec(
                     pre_state["positions"].get(item.instrument_id, "0")
                 )
-        if normalized_type in {"merger", "stock_merger", "mixed_consideration", "exchange", "election", "security_change"}:
+        allocated_source_qty: dict[str, Decimal] = {}
+        for allocation in allocation_facts:
+            allocated_source_qty[allocation.source_instrument_id] = (
+                allocated_source_qty.get(allocation.source_instrument_id, Decimal(0))
+                + allocation.source_quantity
+            )
+        security_transform_types = {
+            "merger", "stock_merger", "mixed_consideration", "exchange",
+            "election", "security_change",
+        }
+        cash_only_types = {"cash_merger", "cash_in_lieu"}
+        if normalized_type in security_transform_types:
             if not security_considerations:
                 raise ValueError(f"{normalized_type} requires a destination security consideration")
+            for source_id, source_quantity in source_qty.items():
+                if source_quantity <= 0:
+                    continue
+                allocated = allocated_source_qty.get(source_id, Decimal(0))
+                if allocated != source_quantity:
+                    raise ValueError(
+                        f"{normalized_type} must transform the full {source_id} position: "
+                        f"held {source_quantity}, allocated {allocated}"
+                    )
+                legs.append(
+                    TransactionLeg(
+                        account_id,
+                        source_id,
+                        -source_quantity,
+                        Decimal(0),
+                        self.repository.instrument_details(source_id)["currency"],
+                        "position",
+                    )
+                )
+        elif normalized_type in cash_only_types:
             for source_id, source_quantity in source_qty.items():
                 if source_quantity > 0:
                     legs.append(

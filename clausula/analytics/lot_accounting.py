@@ -196,20 +196,24 @@ def _apply_generalized_corporate_action(
                         )
                     )
                 continue
-            consumed_basis = _consume_for_corporate_action(
+            _consume_for_corporate_action(
                 lots, source_id, source_quantity, source_basis
             )
             carried_to_cash = source_basis - destination_basis
+            if carried_to_cash < 0:
+                raise LotAccountingError(
+                    f"corporate action basis allocation increases basis for {source_id}: "
+                    f"destination {destination_basis} exceeds source {source_basis}"
+                )
             cash_proceeds = cash_by_currency.get(currency, Decimal(0))
-            realized_cash_basis = min(carried_to_cash, consumed_basis)
-            if carried_to_cash > 0 and cash_proceeds > 0:
+            if carried_to_cash > 0:
                 realized.append(
                     _realized_row(
                         closing_transaction_id=transaction_id,
                         instrument_id=source_id,
                         direction="long",
                         quantity=source_quantity,
-                        closing_value=min(cash_proceeds, realized_cash_basis),
+                        closing_value=cash_proceeds,
                         matches=[
                             {
                                 "lot_id": "",
@@ -217,15 +221,18 @@ def _apply_generalized_corporate_action(
                                 "acquired_at": generalized.get("effective_at") or transaction_id,
                                 "side": "long",
                                 "quantity": source_quantity,
-                                "open_value": realized_cash_basis,
+                                "open_value": carried_to_cash,
                                 "currency": currency,
                             }
                         ],
                         currency=currency,
                     )
                 )
-                cash_by_currency[currency] = cash_proceeds - min(
-                    cash_proceeds, realized_cash_basis
+                cash_by_currency[currency] = Decimal(0)
+            elif cash_proceeds > 0:
+                raise LotAccountingError(
+                    f"corporate action for {source_id} has cash consideration "
+                    "but no basis allocated to cash"
                 )
             if destination_id is not None and destination_quantity > 0:
                 sequence += 1
