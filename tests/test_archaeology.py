@@ -24,12 +24,25 @@ def test_binding_classification_examples() -> None:
     assert classify("clawalpha_repository/code/mcp_server/server.py").classification == "ARCHIVE"
 
 
-def test_generated_inventory_contract() -> None:
+def test_public_archaeology_metadata_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     inventory = json.loads((root / "migration_inventory.yaml").read_text(encoding="utf-8"))
     manifest = json.loads((root / "source_snapshot_manifest.yaml").read_text(encoding="utf-8"))
-    assert inventory["status"] == "reviewed_inventory"
-    assert len(inventory["file_catalog"]) > 10_000
-    assert all(item["sha256"] for item in inventory["file_catalog"])
-    assert len(manifest["bundles"]) == 2
+    catalog = json.loads((root / "data_asset_catalog.yaml").read_text(encoding="utf-8"))
+
+    assert inventory["status"] == "public_summary"
+    assert set(inventory["approved_sources"]) == set(ROOTS)
+    assert "file_catalog" not in inventory
+
+    assert {item["name"] for item in manifest["roots"]} == set(ROOTS)
+    assert {item["name"] for item in manifest["bundles"]} == set(BUNDLES)
+    assert all(item["tree_sha256"] for item in manifest["roots"])
     assert all(bundle["sha256"] for bundle in manifest["bundles"])
+
+    serialized = json.dumps(
+        {"inventory": inventory, "manifest": manifest, "catalog": catalog},
+        ensure_ascii=False,
+    )
+    assert "/home/" not in serialized
+    assert "refs/heads/" not in serialized
+    assert "worktrees/" not in serialized
