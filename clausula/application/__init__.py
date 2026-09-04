@@ -23,6 +23,7 @@ from .decision import DecisionError, DecisionService
 from .research import ResearchError, ResearchService
 from .recommendation import RecommendationService
 from .execution import ExecutionContractError, ExecutionService
+from .decision_workspace import DecisionWorkspaceRepository, DecisionWorkspaceService
 
 __all__ = [
     "CoreRepository",
@@ -44,4 +45,6 @@ __all__ = [
     "RecommendationService",
     "ExecutionContractError",
     "ExecutionService",
+    "DecisionWorkspaceRepository",
+    "DecisionWorkspaceService",
 ]
