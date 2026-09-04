@@ -1,6 +1,6 @@
 # Clausula
 
-Clausula is a local-first, deterministic investment decision system. It provides versioned ledgers, portfolios, market data, investment policies, planning, decision memory, and research evidence without making an LLM the system of record.
+Clausula is a local-first, deterministic investment decision system. It provides versioned ledgers, portfolios, market data, investment policies, planning, decision memory, research evidence, recommendation lifecycle management, and material-attention tracking without making an LLM the system of record.
 
 ## Why Clausula
 
@@ -46,7 +46,7 @@ git diff --check
 | `clausula/capabilities` | permissioned capability registry shared by external surfaces |
 | `clausula/api`, `cli.py`, `sdk.py` | HTTP, CLI and Python projections |
 
-The current implementation includes the kernel, ledger, market and portfolio analytics, policy-as-code, deterministic planning, decision memory, and a local research evidence graph. See [`docs/project/STATUS.md`](docs/project/STATUS.md) for frozen milestones, verification evidence, deferred capabilities, and known risks.
+The current implementation includes the kernel, ledger, market and portfolio analytics, policy-as-code, deterministic planning, decision memory, a local research evidence graph, an append-only recommendation lifecycle, and deterministic material-attention persistence. See [`docs/project/STATUS.md`](docs/project/STATUS.md) for frozen milestones, verification evidence, deferred capabilities, and known risks.
 
 ## Security and data boundary
 
