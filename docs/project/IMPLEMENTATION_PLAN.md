@@ -126,7 +126,7 @@ hard/soft semantics and simulator non-mutation. Update capability mapping and st
 pytest -q
 python -m compileall -q clausula tests scripts
 git diff --check
-python -m pip wheel . --no-deps -w build-output
+python -m pip wheel . --no-deps
 ```
 
 Install the wheel into a temporary venv and smoke `policy.create/evaluate/simulate` through the installed
