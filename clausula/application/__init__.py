@@ -1,10 +1,22 @@
 """Canonical application services."""
 
-from .ledger import ImportValidationError, LedgerService
+# Compose optimized concrete read services before importing downstream modules.
+# The original service modules remain the semantic baseline; the optimized
+# subclasses inherit all writes and replace only bounded read/replay methods.
+from .ledger import ImportValidationError
+from .ledger_fast import LedgerService
+from . import ledger as _ledger_module
+
+_ledger_module.LedgerService = LedgerService
+
 from .ports import CoreRepository, LedgerRepository
 from .rebuild import LedgerRebuilder, RebuildError
 from .market import MarketImportError, MarketService
-from .portfolio import PortfolioService
+from .portfolio_fast import PortfolioService
+from . import portfolio as _portfolio_module
+
+_portfolio_module.PortfolioService = PortfolioService
+
 from .policy import PolicyService
 from .planning import PlanningError, PlanningService
 from .decision import DecisionError, DecisionService
