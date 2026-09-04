@@ -9,6 +9,7 @@ import pytest
 
 from clausula import Store
 from clausula.api.http import create_server
+from clausula.application import PortfolioService
 
 
 def _request(url: str, method: str = "GET", payload: dict | None = None, permissions: tuple[str, ...] = (), confirmed: bool = False, dry_run: bool = False) -> tuple[int, dict | list]:
@@ -47,6 +48,37 @@ def test_http_serves_read_only_capital_cockpit_with_security_headers(tmp_path) -
             assert "LOCAL · READ ONLY" in document
             assert "Known as of" in document
             assert "recommendation.transition" not in document
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_workspace_snapshot_is_one_read_only_projection(tmp_path) -> None:
+    store = Store(tmp_path / "home")
+    portfolio_id = PortfolioService(store).create("Household", "USD")
+    server = create_server(store)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, body = _request(
+            f"{base}/workspace/snapshot",
+            "POST",
+            {
+                "portfolio_id": portfolio_id,
+                "as_of": "2026-09-04",
+                "known_as_of": "2026-09-04",
+            },
+        )
+        assert status == 200
+        assert body["format"] == "clausula-capital-cockpit-v1"
+        assert body["portfolio"]["id"] == portfolio_id
+        assert body["valuation"]["complete"] is True
+        assert body["valuation"]["total_value"] == "0"
+        assert body["policies"] == []
+        assert body["plans"] == []
+        assert body["decisions"] == []
     finally:
         server.shutdown()
         server.server_close()
