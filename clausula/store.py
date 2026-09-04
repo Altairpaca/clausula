@@ -175,6 +175,62 @@ class Store(_SQLiteStore):
             f"SELECT * FROM corporate_actions WHERE transaction_id IN ({placeholders})", ids
         ):
             result[row["transaction_id"]]["corporate_action"] = dict(row)
+        consequences = self.db.execute(
+            f"""SELECT id,event_id,transaction_id FROM corporate_action_account_consequences
+                WHERE transaction_id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        if consequences:
+            event_ids = tuple(dict.fromkeys(row["event_id"] for row in consequences))
+            event_placeholders = ",".join("?" for _ in event_ids)
+            events = {
+                row["id"]: dict(row)
+                for row in self.db.execute(
+                    f"SELECT * FROM corporate_action_events WHERE id IN ({event_placeholders})",
+                    event_ids,
+                )
+            }
+            instruments: dict[str, list[dict[str, Any]]] = {item: [] for item in event_ids}
+            for row in self.db.execute(
+                f"""SELECT * FROM corporate_action_event_instruments
+                    WHERE event_id IN ({event_placeholders}) ORDER BY event_id,sequence""",
+                event_ids,
+            ):
+                instruments[row["event_id"]].append(dict(row))
+            considerations: dict[str, list[dict[str, Any]]] = {
+                item: [] for item in event_ids
+            }
+            for row in self.db.execute(
+                f"""SELECT * FROM corporate_action_considerations
+                    WHERE event_id IN ({event_placeholders}) ORDER BY event_id,sequence""",
+                event_ids,
+            ):
+                considerations[row["event_id"]].append(dict(row))
+            for consequence in consequences:
+                transaction_id = consequence["transaction_id"]
+                if transaction_id not in result:
+                    continue
+                event = events.get(consequence["event_id"])
+                if event is None:
+                    continue
+                action_event = dict(event)
+                action_event["instruments"] = instruments.get(
+                    consequence["event_id"], []
+                )
+                action_event["considerations"] = considerations.get(
+                    consequence["event_id"], []
+                )
+                consequence_placeholders = ",".join(["?"])
+                action_event["basis_allocations"] = [
+                    dict(row)
+                    for row in self.db.execute(
+                        f"""SELECT * FROM corporate_action_basis_allocations
+                            WHERE consequence_id IN ({consequence_placeholders})
+                            ORDER BY sequence""",
+                        (consequence["id"],),
+                    )
+                ]
+                result[transaction_id]["generalized_corporate_action"] = action_event
         transfers = self.db.execute(
             f"""SELECT * FROM security_transfers
                 WHERE source_transaction_id IN ({placeholders})

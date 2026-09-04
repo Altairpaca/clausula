@@ -270,6 +270,113 @@ class CorporateAction:
         return self.numerator / self.denominator
 
 
+CORPORATE_ACTION_TYPES = frozenset(
+    {
+        "symbol_change",
+        "security_change",
+        "merger",
+        "cash_merger",
+        "stock_merger",
+        "mixed_consideration",
+        "spin_off",
+        "exchange",
+        "election",
+        "cash_in_lieu",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ActionInstrumentFact:
+    role: str
+    instrument_id: str
+    sequence: int
+    ratio_numerator: Decimal | None = None
+    ratio_denominator: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role", _required_text(self.role, "role").lower())
+        if self.role not in {"source", "destination"}:
+            raise ValueError("action instrument role must be source or destination")
+        object.__setattr__(self, "instrument_id", require_uuid(self.instrument_id, "instrument_id"))
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence <= 0:
+            raise ValueError("action instrument sequence must be a positive integer")
+        if (self.ratio_numerator is None) != (self.ratio_denominator is None):
+            raise ValueError("action instrument ratio requires both numerator and denominator")
+        if self.ratio_numerator is not None:
+            numerator = dec(self.ratio_numerator)
+            denominator = dec(self.ratio_denominator)
+            object.__setattr__(self, "ratio_numerator", numerator)
+            object.__setattr__(self, "ratio_denominator", denominator)
+            if numerator <= 0 or denominator <= 0:
+                raise ValueError("action instrument ratio must be positive")
+
+
+@dataclass(frozen=True)
+class ActionConsiderationFact:
+    kind: str
+    sequence: int
+    instrument_id: str | None = None
+    currency: str | None = None
+    quantity: Decimal | None = None
+    amount: Decimal | None = None
+    election_key: str | None = None
+    provenance: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _required_text(self.kind, "kind").lower())
+        if self.kind not in {"security", "cash", "fee", "tax"}:
+            raise ValueError("consideration kind must be security, cash, fee, or tax")
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence <= 0:
+            raise ValueError("consideration sequence must be a positive integer")
+        if self.kind == "security":
+            if self.instrument_id is None:
+                raise ValueError("security consideration requires instrument_id")
+            object.__setattr__(self, "instrument_id", require_uuid(self.instrument_id, "instrument_id"))
+            if self.quantity is None or dec(self.quantity) <= 0:
+                raise ValueError("security consideration requires a positive quantity")
+            object.__setattr__(self, "quantity", dec(self.quantity))
+        else:
+            if self.currency is None or self.amount is None or dec(self.amount) < 0:
+                raise ValueError("cash/fee/tax consideration requires currency and nonnegative amount")
+            object.__setattr__(self, "currency", _required_text(self.currency, "currency").upper())
+            object.__setattr__(self, "amount", dec(self.amount))
+        if self.election_key is not None:
+            object.__setattr__(self, "election_key", _required_text(self.election_key, "election_key"))
+        object.__setattr__(self, "provenance", str(self.provenance).strip())
+
+
+@dataclass(frozen=True)
+class ActionBasisAllocation:
+    source_instrument_id: str
+    destination_instrument_id: str | None
+    source_quantity: Decimal
+    destination_quantity: Decimal
+    source_basis: Decimal
+    destination_basis: Decimal
+    currency: str
+    sequence: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_instrument_id", require_uuid(self.source_instrument_id, "source_instrument_id"))
+        if self.destination_instrument_id is not None:
+            object.__setattr__(
+                self,
+                "destination_instrument_id",
+                require_uuid(self.destination_instrument_id, "destination_instrument_id"),
+            )
+        object.__setattr__(self, "source_quantity", dec(self.source_quantity))
+        object.__setattr__(self, "destination_quantity", dec(self.destination_quantity))
+        object.__setattr__(self, "source_basis", dec(self.source_basis))
+        object.__setattr__(self, "destination_basis", dec(self.destination_basis))
+        object.__setattr__(self, "currency", _required_text(self.currency, "currency").upper())
+        for name in ("source_quantity", "destination_quantity", "source_basis", "destination_basis"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must not be negative")
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence <= 0:
+            raise ValueError("basis allocation sequence must be a positive integer")
+
+
 @dataclass(frozen=True)
 class ReconciliationObservation:
     kind: str

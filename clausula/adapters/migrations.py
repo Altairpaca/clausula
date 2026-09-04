@@ -676,6 +676,183 @@ CREATE TRIGGER recommendation_transitions_reject_delete BEFORE DELETE ON recomme
 BEGIN SELECT RAISE(ABORT, 'recommendation_transitions is append-only'); END;
 """,
     ),
+    Migration(
+        12,
+        "historical_identifiers_and_generalized_corporate_actions",
+        """
+CREATE TABLE identifier_validity_ranges(
+    id TEXT PRIMARY KEY,
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    scheme TEXT NOT NULL CHECK(length(trim(scheme)) > 0),
+    value TEXT NOT NULL CHECK(length(trim(value)) > 0),
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    provenance TEXT NOT NULL CHECK(length(trim(provenance)) > 0),
+    CHECK(valid_to IS NULL OR valid_to > valid_from),
+    CHECK(known_at <= recorded_at),
+    UNIQUE(scheme, value, valid_from, instrument_id)
+);
+CREATE INDEX identifier_validity_lookup
+ON identifier_validity_ranges(scheme, value, valid_from, valid_to, known_at, recorded_at, id);
+CREATE INDEX identifier_validity_instrument
+ON identifier_validity_ranges(instrument_id, valid_from, known_at, recorded_at, id);
+CREATE TRIGGER identifier_validity_ranges_reject_update
+BEFORE UPDATE ON identifier_validity_ranges
+BEGIN SELECT RAISE(ABORT, 'identifier_validity_ranges is append-only'); END;
+CREATE TRIGGER identifier_validity_ranges_reject_delete
+BEFORE DELETE ON identifier_validity_ranges
+BEGIN SELECT RAISE(ABORT, 'identifier_validity_ranges is append-only'); END;
+CREATE TRIGGER identifier_validity_ranges_reject_overlap
+BEFORE INSERT ON identifier_validity_ranges
+WHEN EXISTS(
+    SELECT 1
+    FROM identifier_validity_ranges AS existing
+    WHERE existing.scheme = NEW.scheme
+      AND existing.value = NEW.value
+      AND existing.valid_from < COALESCE(NEW.valid_to, '9999-12-31T23:59:59.999999+00:00')
+      AND NEW.valid_from < COALESCE(existing.valid_to, '9999-12-31T23:59:59.999999+00:00')
+)
+BEGIN SELECT RAISE(ABORT, 'overlapping identifier validity ranges'); END;
+CREATE TABLE corporate_action_events(
+    id TEXT PRIMARY KEY,
+    action_type TEXT NOT NULL CHECK(action_type IN(
+        'symbol_change', 'security_change', 'merger', 'cash_merger',
+        'stock_merger', 'mixed_consideration', 'spin_off', 'exchange',
+        'election', 'cash_in_lieu'
+    )),
+    effective_at TEXT NOT NULL,
+    known_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    description TEXT NOT NULL,
+    provenance TEXT NOT NULL CHECK(length(trim(provenance)) > 0),
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    CHECK(known_at <= recorded_at)
+);
+CREATE TABLE corporate_action_event_instruments(
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES corporate_action_events(id),
+    sequence INTEGER NOT NULL CHECK(sequence > 0),
+    role TEXT NOT NULL CHECK(role IN('source', 'destination')),
+    instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    ratio_numerator TEXT,
+    ratio_denominator TEXT,
+    CHECK((ratio_numerator IS NULL AND ratio_denominator IS NULL) OR
+          (ratio_numerator IS NOT NULL AND ratio_denominator IS NOT NULL AND
+           length(trim(ratio_numerator)) > 0 AND length(trim(ratio_denominator)) > 0 AND
+           CAST(ratio_numerator AS NUMERIC) > 0 AND CAST(ratio_denominator AS NUMERIC) > 0)),
+    UNIQUE(event_id, sequence),
+    UNIQUE(event_id, role, instrument_id)
+);
+CREATE TABLE corporate_action_considerations(
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES corporate_action_events(id),
+    sequence INTEGER NOT NULL CHECK(sequence > 0),
+    kind TEXT NOT NULL CHECK(kind IN('security', 'cash', 'fee', 'tax')),
+    instrument_id TEXT REFERENCES instruments(id),
+    currency TEXT,
+    quantity TEXT,
+    amount TEXT,
+    election_key TEXT,
+    provenance TEXT NOT NULL CHECK(length(trim(provenance)) > 0),
+    CHECK((kind = 'security' AND instrument_id IS NOT NULL AND quantity IS NOT NULL
+           AND currency IS NULL AND amount IS NULL AND length(trim(quantity)) > 0
+           AND CAST(quantity AS NUMERIC) > 0) OR
+          (kind IN('cash', 'fee', 'tax') AND instrument_id IS NULL AND currency IS NOT NULL
+           AND amount IS NOT NULL AND quantity IS NULL AND length(trim(amount)) > 0
+           AND CAST(amount AS NUMERIC) >= 0)),
+    UNIQUE(event_id, sequence),
+    UNIQUE(event_id, election_key)
+);
+CREATE TABLE corporate_action_account_consequences(
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES corporate_action_events(id),
+    account_id TEXT NOT NULL REFERENCES accounts(id),
+    transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    consequence_type TEXT NOT NULL CHECK(consequence_type IN(
+        'transform', 'cash_settlement', 'fee', 'tax', 'cash_in_lieu'
+    )),
+    generated INTEGER NOT NULL CHECK(generated IN(0,1)),
+    recorded_at TEXT NOT NULL,
+    provenance TEXT NOT NULL CHECK(length(trim(provenance)) > 0),
+    UNIQUE(event_id, account_id, transaction_id)
+);
+CREATE INDEX corporate_action_events_temporal
+ON corporate_action_events(effective_at, known_at, recorded_at, id);
+CREATE INDEX corporate_action_event_instruments_lookup
+ON corporate_action_event_instruments(event_id, role, sequence, instrument_id);
+CREATE INDEX corporate_action_considerations_lookup
+ON corporate_action_considerations(event_id, kind, sequence, id);
+CREATE INDEX corporate_action_account_consequences_account
+ON corporate_action_account_consequences(account_id, event_id, transaction_id);
+CREATE TRIGGER corporate_action_events_reject_update
+BEFORE UPDATE ON corporate_action_events
+BEGIN SELECT RAISE(ABORT, 'corporate_action_events is append-only'); END;
+CREATE TRIGGER corporate_action_events_reject_delete
+BEFORE DELETE ON corporate_action_events
+BEGIN SELECT RAISE(ABORT, 'corporate_action_events is append-only'); END;
+CREATE TRIGGER corporate_action_event_instruments_reject_update
+BEFORE UPDATE ON corporate_action_event_instruments
+BEGIN SELECT RAISE(ABORT, 'corporate_action_event_instruments is append-only'); END;
+CREATE TRIGGER corporate_action_event_instruments_reject_delete
+BEFORE DELETE ON corporate_action_event_instruments
+BEGIN SELECT RAISE(ABORT, 'corporate_action_event_instruments is append-only'); END;
+CREATE TRIGGER corporate_action_considerations_reject_update
+BEFORE UPDATE ON corporate_action_considerations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_considerations is append-only'); END;
+CREATE TRIGGER corporate_action_considerations_reject_delete
+BEFORE DELETE ON corporate_action_considerations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_considerations is append-only'); END;
+CREATE TRIGGER corporate_action_account_consequences_reject_update
+BEFORE UPDATE ON corporate_action_account_consequences
+BEGIN SELECT RAISE(ABORT, 'corporate_action_account_consequences is append-only'); END;
+CREATE TRIGGER corporate_action_account_consequences_reject_delete
+BEFORE DELETE ON corporate_action_account_consequences
+BEGIN SELECT RAISE(ABORT, 'corporate_action_account_consequences is append-only'); END;
+CREATE TABLE corporate_action_basis_allocations(
+    id TEXT PRIMARY KEY,
+    consequence_id TEXT NOT NULL REFERENCES corporate_action_account_consequences(id),
+    sequence INTEGER NOT NULL CHECK(sequence > 0),
+    source_instrument_id TEXT NOT NULL REFERENCES instruments(id),
+    destination_instrument_id TEXT REFERENCES instruments(id),
+    source_quantity TEXT NOT NULL CHECK(length(trim(source_quantity)) > 0 AND CAST(source_quantity AS NUMERIC) >= 0),
+    destination_quantity TEXT NOT NULL CHECK(length(trim(destination_quantity)) > 0 AND CAST(destination_quantity AS NUMERIC) >= 0),
+    source_basis TEXT NOT NULL CHECK(length(trim(source_basis)) > 0 AND CAST(source_basis AS NUMERIC) >= 0),
+    destination_basis TEXT NOT NULL CHECK(length(trim(destination_basis)) > 0 AND CAST(destination_basis AS NUMERIC) >= 0),
+    currency TEXT NOT NULL,
+    UNIQUE(consequence_id, sequence)
+);
+CREATE INDEX corporate_action_basis_allocations_lookup
+ON corporate_action_basis_allocations(consequence_id, sequence, source_instrument_id, destination_instrument_id);
+CREATE TRIGGER corporate_action_basis_allocations_reject_update
+BEFORE UPDATE ON corporate_action_basis_allocations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_basis_allocations is append-only'); END;
+CREATE TRIGGER corporate_action_basis_allocations_reject_delete
+BEFORE DELETE ON corporate_action_basis_allocations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_basis_allocations is append-only'); END;
+CREATE TABLE corporate_action_tax_interpretations(
+    id TEXT PRIMARY KEY,
+    consequence_id TEXT NOT NULL REFERENCES corporate_action_account_consequences(id),
+    account_id TEXT NOT NULL REFERENCES accounts(id),
+    tax_profile_ref TEXT NOT NULL CHECK(length(trim(tax_profile_ref)) > 0),
+    interpretation_json TEXT NOT NULL,
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    import_batch_id TEXT NOT NULL REFERENCES imports(id),
+    recorded_at TEXT NOT NULL,
+    UNIQUE(consequence_id, tax_profile_ref)
+);
+CREATE INDEX corporate_action_tax_interpretations_account
+ON corporate_action_tax_interpretations(account_id, consequence_id, tax_profile_ref);
+CREATE TRIGGER corporate_action_tax_interpretations_reject_update
+BEFORE UPDATE ON corporate_action_tax_interpretations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_tax_interpretations is append-only'); END;
+CREATE TRIGGER corporate_action_tax_interpretations_reject_delete
+BEFORE DELETE ON corporate_action_tax_interpretations
+BEGIN SELECT RAISE(ABORT, 'corporate_action_tax_interpretations is append-only'); END;
+""",
+    ),
 )
 
 

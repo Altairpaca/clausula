@@ -386,7 +386,7 @@ def test_policy_backup_round_trip_includes_v6_tables(tmp_path):
     )
     bundle = tmp_path / "policy.zip"
     manifest = store.backup_bundle(bundle)
-    assert manifest["schema_version"] == 11
+    assert manifest["schema_version"] == 12
     assert store.verify_backup(bundle)["valid"] is True
     export = tmp_path / "export.jsonl"
     store.export(export)
