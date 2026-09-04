@@ -5,8 +5,11 @@ from enum import StrEnum
 from typing import Any
 
 from clausula.application import CoreRepository
-from clausula.capabilities import CapabilityPermissionError, CapabilityRegistry
-from clausula.capabilities.core import build_core_registry
+from clausula.capabilities import (
+    CapabilityPermissionError,
+    CapabilityRegistry,
+    build_core_registry,
+)
 
 
 class McpProfile(StrEnum):
@@ -29,7 +32,15 @@ class McpTool:
 PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
     McpProfile.RESEARCH_READ: frozenset({"research:read"}),
     McpProfile.PORTFOLIO_READ: frozenset(
-        {"portfolio:read", "ledger:read", "market:read", "policy:read", "planning:read", "decision:read"}
+        {
+            "portfolio:read",
+            "ledger:read",
+            "market:read",
+            "policy:read",
+            "planning:read",
+            "decision:read",
+            "execution:read",
+        }
     ),
     McpProfile.ADVISOR: frozenset(
         {
@@ -39,6 +50,7 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "policy:read",
             "planning:read",
             "decision:read",
+            "execution:read",
             "research:read",
             "research:write",
             "recommendation:create",
@@ -58,6 +70,8 @@ PROFILE_PERMISSIONS: dict[McpProfile, frozenset[str]] = {
             "planning:write",
             "decision:read",
             "decision:write",
+            "execution:read",
+            "execution:write",
             "research:read",
             "research:write",
             "system:read",
