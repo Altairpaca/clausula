@@ -51,7 +51,7 @@ class LocalAuthRegistry:
     """In-memory local identity and confirmation boundary for one daemon process.
 
     Tokens are generated at process start by default and are never persisted in
-    the repository. Permission sets are derived server-side from a fixed profile;
+    canonical state. Permission sets are derived server-side from a fixed profile;
     callers cannot submit arbitrary permissions. Confirmation challenges are
     one-time, expire quickly, and bind principal + capability + canonical request.
     """
@@ -117,6 +117,24 @@ class LocalAuthRegistry:
 
         return self.principal(principal_id).token
 
+    def credential_manifest(self) -> dict[str, Any]:
+        """Return bootstrap credentials for a local 0600 runtime file only."""
+
+        with self._lock:
+            return {
+                "format": "clausula-local-auth-v1",
+                "principals": [
+                    {
+                        "principal_id": principal.principal_id,
+                        "profile": principal.profile.value,
+                        "token": principal.token,
+                    }
+                    for principal in sorted(
+                        self._principals.values(), key=lambda item: item.principal_id
+                    )
+                ],
+            }
+
     def authenticate_bearer(self, header: str | None) -> LocalPrincipal:
         if not header:
             raise AuthenticationError("Authorization bearer token is required")
@@ -126,7 +144,6 @@ class LocalAuthRegistry:
         presented = self._token_digest(value.strip())
         with self._lock:
             matched_id = None
-            # Compare digests in constant time rather than dictionary lookup alone.
             for token_digest, principal_id in self._tokens.items():
                 if hmac.compare_digest(token_digest, presented):
                     matched_id = principal_id
@@ -184,8 +201,6 @@ class LocalAuthRegistry:
             expected = self.request_digest(principal.principal_id, capability, arguments)
             if not hmac.compare_digest(challenge.request_sha256, expected):
                 raise ConfirmationChallengeError("confirmation challenge is bound to different arguments")
-            # Remove only after every binding check succeeds. The exact request can
-            # execute once; later replay of the nonce fails.
             del self._challenges[nonce]
             return challenge
 
