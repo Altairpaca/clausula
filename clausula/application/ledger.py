@@ -11,6 +11,10 @@ from .ports import CoreRepository
 from clausula.analytics import plan_fifo_transfer, replay_fifo
 
 from clausula.domain import (
+    ActionBasisAllocation,
+    ActionConsiderationFact,
+    ActionInstrumentFact,
+    CORPORATE_ACTION_TYPES,
     CorporateAction,
     FxConversion,
     InstrumentIdentifier,
@@ -922,3 +926,259 @@ class LedgerService:
         )
         self.repository.add_corporate_action(transaction, action)
         return action_id
+
+    def record_corporate_action(
+        self,
+        account_id: str,
+        action_type: str,
+        effective_at: str,
+        instruments: list[dict] | tuple[dict, ...],
+        considerations: list[dict] | tuple[dict, ...],
+        *,
+        basis_allocations: list[dict] | tuple[dict, ...] = (),
+        tax_profile_ref: str | None = None,
+        tax_interpretation: dict | None = None,
+        known_at: str | None = None,
+        description: str = "corporate action",
+    ) -> dict[str, str]:
+        self.repository.require_account(account_id)
+        normalized_type = str(action_type).strip().lower()
+        if normalized_type not in CORPORATE_ACTION_TYPES:
+            raise ValueError(f"unsupported corporate action type: {action_type}")
+        if normalized_type in {"cash_merger", "cash_in_lieu"} and not any(
+            item.get("kind") == "cash" for item in considerations
+        ):
+            raise ValueError(f"{normalized_type} requires explicit cash consideration")
+        instrument_facts = [
+            item if isinstance(item, ActionInstrumentFact) else ActionInstrumentFact(**item)
+            for item in instruments
+        ]
+        consideration_facts = [
+            item
+            if isinstance(item, ActionConsiderationFact)
+            else ActionConsiderationFact(**item)
+            for item in considerations
+        ]
+        allocation_facts = [
+            item if isinstance(item, ActionBasisAllocation) else ActionBasisAllocation(**item)
+            for item in basis_allocations
+        ]
+        for item in instrument_facts:
+            self.repository.instrument_details(item.instrument_id)
+        for item in consideration_facts:
+            if item.instrument_id is not None:
+                self.repository.instrument_details(item.instrument_id)
+        recorded_at = now()
+        knowledge_time = canonical_timestamp(known_at or recorded_at)
+        effective = canonical_timestamp(effective_at)
+        pre_state = self.state(account_id, effective, known_as_of=knowledge_time)
+        source_instrument_ids = {
+            item.instrument_id for item in instrument_facts if item.role == "source"
+        }
+        for source_id in source_instrument_ids:
+            quantity = dec(pre_state["positions"].get(source_id, "0"))
+            if quantity < 0:
+                raise ValueError(
+                    f"corporate action on a short position is unsupported: {source_id}"
+                )
+        event_id = new_id()
+        transaction_id = new_id()
+        legs: list[TransactionLeg] = []
+        position_delta_by_instrument: dict[str, Decimal] = {}
+        cash_by_currency: dict[str, Decimal] = {}
+        fee_by_currency: dict[str, Decimal] = {}
+        tax_by_currency: dict[str, Decimal] = {}
+        security_considerations = [
+            item for item in consideration_facts if item.kind == "security"
+        ]
+        cash_considerations = [item for item in consideration_facts if item.kind == "cash"]
+        for item in consideration_facts:
+            if item.kind == "security":
+                position_delta_by_instrument[item.instrument_id] = (
+                    position_delta_by_instrument.get(item.instrument_id, Decimal(0))
+                    + dec(item.quantity)
+                )
+            elif item.kind == "cash":
+                cash_by_currency[item.currency] = cash_by_currency.get(
+                    item.currency, Decimal(0)
+                ) + dec(item.amount)
+            elif item.kind == "fee":
+                fee_by_currency[item.currency] = fee_by_currency.get(
+                    item.currency, Decimal(0)
+                ) + dec(item.amount)
+            elif item.kind == "tax":
+                tax_by_currency[item.currency] = tax_by_currency.get(
+                    item.currency, Decimal(0)
+                ) + dec(item.amount)
+        source_qty: dict[str, Decimal] = {}
+        for item in instrument_facts:
+            if item.role == "source":
+                source_qty[item.instrument_id] = dec(
+                    pre_state["positions"].get(item.instrument_id, "0")
+                )
+        if normalized_type in {"merger", "stock_merger", "mixed_consideration", "exchange", "election", "security_change"}:
+            if not security_considerations:
+                raise ValueError(f"{normalized_type} requires a destination security consideration")
+            for source_id, source_quantity in source_qty.items():
+                if source_quantity > 0:
+                    legs.append(
+                        TransactionLeg(
+                            account_id,
+                            source_id,
+                            -source_quantity,
+                            Decimal(0),
+                            self.repository.instrument_details(source_id)["currency"],
+                            "position",
+                        )
+                    )
+        for item in security_considerations:
+            delta = dec(item.quantity)
+            legs.append(
+                TransactionLeg(
+                    account_id,
+                    item.instrument_id,
+                    delta,
+                    Decimal(0),
+                    self.repository.instrument_details(item.instrument_id)["currency"],
+                    "position",
+                )
+            )
+        total_cash_out_by_currency: dict[str, Decimal] = {}
+        for item in cash_considerations:
+            total_cash_out_by_currency[item.currency] = total_cash_out_by_currency.get(
+                item.currency, Decimal(0)
+            ) + dec(item.amount)
+        for currency, amount in total_cash_out_by_currency.items():
+            legs.append(
+                TransactionLeg(account_id, None, Decimal(0), amount, currency, "cash")
+            )
+            legs.append(
+                TransactionLeg(
+                    account_id,
+                    None,
+                    Decimal(0),
+                    -amount,
+                    currency,
+                    "income",
+                )
+            )
+        for currency, amount in fee_by_currency.items():
+            legs.append(
+                TransactionLeg(account_id, None, Decimal(0), -amount, currency, "cash")
+            )
+            legs.append(TransactionLeg(account_id, None, Decimal(0), amount, currency, "fee"))
+        for currency, amount in tax_by_currency.items():
+            legs.append(
+                TransactionLeg(account_id, None, Decimal(0), -amount, currency, "cash")
+            )
+            legs.append(TransactionLeg(account_id, None, Decimal(0), amount, currency, "tax"))
+        if not legs:
+            raise ValueError("corporate action must produce at least one account consequence")
+        self._require_amount_conservation(legs)
+        provenance_content = json.dumps(
+            {
+                "format": MANUAL_EVENT_FORMAT,
+                "operation": f"ledger.record_{normalized_type}",
+                "event_id": event_id,
+                "transaction_id": transaction_id,
+                "account_id": account_id,
+                "action_type": normalized_type,
+                "effective_at": effective,
+                "known_at": knowledge_time,
+                "description": description,
+                "instruments": [
+                    {
+                        "role": item.role,
+                        "instrument_id": item.instrument_id,
+                        "ratio_numerator": (
+                            None
+                            if item.ratio_numerator is None
+                            else canonical_decimal(item.ratio_numerator)
+                        ),
+                        "ratio_denominator": (
+                            None
+                            if item.ratio_denominator is None
+                            else canonical_decimal(item.ratio_denominator)
+                        ),
+                    }
+                    for item in instrument_facts
+                ],
+                "considerations": [
+                    {
+                        "kind": item.kind,
+                        "instrument_id": item.instrument_id,
+                        "currency": item.currency,
+                        "quantity": (
+                            None if item.quantity is None else canonical_decimal(item.quantity)
+                        ),
+                        "amount": None if item.amount is None else canonical_decimal(item.amount),
+                    }
+                    for item in consideration_facts
+                ],
+                "basis_allocations": [
+                    {
+                        "source_instrument_id": item.source_instrument_id,
+                        "destination_instrument_id": item.destination_instrument_id,
+                        "source_quantity": canonical_decimal(item.source_quantity),
+                        "destination_quantity": canonical_decimal(item.destination_quantity),
+                        "source_basis": canonical_decimal(item.source_basis),
+                        "destination_basis": canonical_decimal(item.destination_basis),
+                        "currency": item.currency,
+                    }
+                    for item in allocation_facts
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        artifact_id, _ = self.repository.virtual_artifact(
+            f"manual://corporate-action-{normalized_type}", provenance_content
+        )
+        batch_id = self.repository.import_batch(
+            artifact_id,
+            adapter_name="manual-corporate-action",
+            adapter_version="2",
+            schema_version="2",
+        )
+        transaction = Transaction(
+            transaction_id,
+            account_id,
+            normalized_type,
+            effective,
+            knowledge_time,
+            recorded_at,
+            description,
+            artifact_id,
+            batch_id,
+            tuple(legs),
+        )
+        self.repository.add_generalized_corporate_action(
+            event_id=event_id,
+            action_type=normalized_type,
+            effective_at=effective,
+            known_at=knowledge_time,
+            recorded_at=recorded_at,
+            description=description,
+            provenance=provenance_content,
+            source_artifact_id=artifact_id,
+            import_batch_id=batch_id,
+            instruments=instrument_facts,
+            considerations=consideration_facts,
+            transactions=[transaction],
+            consequence_type="transform",
+            basis_allocations=allocation_facts,
+            tax_profile_ref=tax_profile_ref,
+            tax_interpretation=tax_interpretation,
+        )
+        cash_amount = str(
+            sum(
+                (dec(item.amount) for item in cash_considerations),
+                Decimal(0),
+            )
+        )
+        return {
+            "event_id": event_id,
+            "action_id": event_id,
+            "transaction_id": transaction_id,
+            "cash_in_lieu_amount": cash_amount if normalized_type == "cash_in_lieu" else None,
+        }

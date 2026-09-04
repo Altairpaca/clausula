@@ -146,6 +146,221 @@ def _consume_transfer_allocations(
             )
 
 
+def _apply_generalized_corporate_action(
+    lots: list[_OpenLot],
+    realized: list[dict[str, Any]],
+    sequence: int,
+    transaction_id: str,
+    generalized: Mapping[str, Any],
+) -> int:
+    allocations = list(generalized.get("basis_allocations") or ())
+    considerations = list(generalized.get("considerations") or ())
+    cash_by_currency: dict[str, Decimal] = {}
+    for item in considerations:
+        if str(item["kind"]) == "cash":
+            cash_by_currency[str(item["currency"])] = cash_by_currency.get(
+                str(item["currency"]), Decimal(0)
+            ) + dec(item["amount"])
+    if allocations:
+        action_type = str(generalized.get("action_type") or "")
+        for allocation in allocations:
+            source_id = str(allocation["source_instrument_id"])
+            destination_id = allocation.get("destination_instrument_id")
+            source_quantity = dec(allocation["source_quantity"])
+            destination_quantity = dec(allocation["destination_quantity"])
+            source_basis = dec(allocation["source_basis"])
+            destination_basis = dec(allocation["destination_basis"])
+            currency = str(allocation["currency"])
+            if action_type == "spin_off":
+                child_basis = destination_basis
+                reduced = _reduce_spin_off_parent_basis(
+                    lots, source_id, child_basis, currency
+                )
+                if reduced != child_basis:
+                    raise LotAccountingError(
+                        f"spin-off basis allocation mismatch for {source_id}: reduced {reduced}, expected {child_basis}"
+                    )
+                if destination_id is not None and destination_quantity > 0:
+                    sequence += 1
+                    lots.append(
+                        _OpenLot(
+                            f"{transaction_id}:ca:{sequence}",
+                            str(destination_id),
+                            transaction_id,
+                            generalized.get("effective_at") or transaction_id,
+                            "long",
+                            destination_quantity,
+                            destination_basis,
+                            currency,
+                            sequence,
+                        )
+                    )
+                continue
+            consumed_basis = _consume_for_corporate_action(
+                lots, source_id, source_quantity, source_basis
+            )
+            carried_to_cash = source_basis - destination_basis
+            cash_proceeds = cash_by_currency.get(currency, Decimal(0))
+            realized_cash_basis = min(carried_to_cash, consumed_basis)
+            if carried_to_cash > 0 and cash_proceeds > 0:
+                realized.append(
+                    _realized_row(
+                        closing_transaction_id=transaction_id,
+                        instrument_id=source_id,
+                        direction="long",
+                        quantity=source_quantity,
+                        closing_value=min(cash_proceeds, realized_cash_basis),
+                        matches=[
+                            {
+                                "lot_id": "",
+                                "source_transaction_id": transaction_id,
+                                "acquired_at": generalized.get("effective_at") or transaction_id,
+                                "side": "long",
+                                "quantity": source_quantity,
+                                "open_value": realized_cash_basis,
+                                "currency": currency,
+                            }
+                        ],
+                        currency=currency,
+                    )
+                )
+                cash_by_currency[currency] = cash_proceeds - min(
+                    cash_proceeds, realized_cash_basis
+                )
+            if destination_id is not None and destination_quantity > 0:
+                sequence += 1
+                lots.append(
+                    _OpenLot(
+                        f"{transaction_id}:ca:{sequence}",
+                        str(destination_id),
+                        transaction_id,
+                        generalized.get("effective_at") or transaction_id,
+                        "long",
+                        destination_quantity,
+                        destination_basis,
+                        currency,
+                        sequence,
+                    )
+                )
+    else:
+        for currency, cash_amount in cash_by_currency.items():
+            total_available = sum(
+                (
+                    lot.open_value or Decimal(0)
+                    for lot in lots
+                    if lot.side == "long" and lot.currency == currency and lot.quantity > 0
+                ),
+                Decimal(0),
+            )
+            if total_available == 0:
+                continue
+            consumed: list[_OpenLot] = []
+            for lot in sorted(lots, key=lambda lot: lot.sequence):
+                if lot.side != "long" or lot.currency != currency or lot.quantity <= 0:
+                    continue
+                consumed.append(lot)
+            if not consumed:
+                raise LotAccountingError(
+                    "corporate action cash settlement requires long lots or explicit basis allocation"
+                )
+            realized.append(
+                _realized_row(
+                    closing_transaction_id=transaction_id,
+                    instrument_id=str(consumed[0].instrument_id),
+                    direction="long",
+                    quantity=sum((lot.quantity for lot in consumed), Decimal(0)),
+                    closing_value=cash_amount,
+                    matches=[
+                        {
+                            "lot_id": lot.lot_id,
+                            "source_transaction_id": lot.source_transaction_id,
+                            "acquired_at": lot.acquired_at,
+                            "side": "long",
+                            "quantity": lot.quantity,
+                            "open_value": lot.open_value,
+                            "currency": lot.currency,
+                        }
+                        for lot in consumed
+                    ],
+                    currency=currency,
+                )
+            )
+            for lot in consumed:
+                lot.quantity = Decimal(0)
+                lot.open_value = Decimal(0)
+    return sequence
+
+
+def _consume_for_corporate_action(
+    lots: list[_OpenLot],
+    instrument_id: str,
+    quantity: Decimal,
+    expected_basis: Decimal,
+) -> Decimal:
+    remaining = quantity
+    consumed_basis = Decimal(0)
+    for lot in sorted(lots, key=lambda lot: lot.sequence):
+        if lot.instrument_id != instrument_id or lot.side != "long" or lot.quantity <= 0:
+            continue
+        if remaining <= 0:
+            break
+        consumed = min(lot.quantity, remaining)
+        if lot.open_value is None:
+            raise LotAccountingError(
+                f"cannot transform a long lot whose basis is unknown: {lot.lot_id}"
+            )
+        allocated = (
+            lot.open_value
+            if consumed == lot.quantity
+            else lot.open_value * consumed / lot.quantity
+        )
+        lot.quantity -= consumed
+        lot.open_value -= allocated
+        consumed_basis += allocated
+        remaining -= consumed
+    if remaining != 0:
+        raise LotAccountingError(
+            f"insufficient long lots for corporate action source {instrument_id}: remaining {remaining}"
+        )
+    if consumed_basis != expected_basis:
+        raise LotAccountingError(
+            f"corporate action basis mismatch for {instrument_id}: expected {expected_basis}, consumed {consumed_basis}"
+        )
+    return consumed_basis
+
+
+def _reduce_spin_off_parent_basis(
+    lots: list[_OpenLot],
+    instrument_id: str,
+    child_basis: Decimal,
+    currency: str,
+) -> Decimal:
+    remaining = child_basis
+    reduced = Decimal(0)
+    for lot in sorted(lots, key=lambda lot: lot.sequence):
+        if lot.instrument_id != instrument_id or lot.side != "long" or lot.quantity <= 0:
+            continue
+        if remaining <= 0:
+            break
+        if lot.open_value is None:
+            raise LotAccountingError(
+                f"cannot spin off from a long lot whose basis is unknown: {lot.lot_id}"
+            )
+        allocated = (
+            lot.open_value
+            if remaining >= lot.open_value
+            else remaining
+        )
+        lot.open_value -= allocated
+        reduced += allocated
+        remaining -= allocated
+    if remaining != 0:
+        raise LotAccountingError(
+            f"insufficient parent basis for spin-off of {instrument_id}: short {remaining}"
+        )
+    return reduced
+
+
 def _realized_row(
     *,
     closing_transaction_id: str,
@@ -269,6 +484,17 @@ def replay_lots(
                 lots,
                 str(transfer["instrument_id"]),
                 transfer["allocations"],
+            )
+            continue
+
+        generalized = metadata.get("generalized_corporate_action")
+        if generalized:
+            _apply_generalized_corporate_action(
+                lots,
+                realized,
+                sequence,
+                transaction_id,
+                generalized,
             )
             continue
 

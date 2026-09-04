@@ -10,6 +10,10 @@ from .common import (
     require_uuid,
 )
 from .ledger import (
+    ActionBasisAllocation,
+    ActionConsiderationFact,
+    ActionInstrumentFact,
+    CORPORATE_ACTION_TYPES,
     ImportBatchRef,
     CorporateAction,
     FxConversion,
@@ -74,6 +78,10 @@ from .recommendation import (
 
 __all__ = [
     "DomainValidationError",
+    "ActionBasisAllocation",
+    "ActionConsiderationFact",
+    "ActionInstrumentFact",
+    "CORPORATE_ACTION_TYPES",
     "DatasetVersion",
     "FxRate",
     "MarketPrice",

@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Iterable, Iterator, Mapping
 
-from .audit import append_audit_event, verify_audit_chain
+from .audit import append_audit_event, canonical_json, verify_audit_chain
 from .backup import (
     create_backup_bundle,
     restore_backup_bundle,
@@ -21,6 +21,9 @@ from .backup import (
 from .migrations import LATEST_SCHEMA_VERSION, migrate
 
 from clausula.domain import (
+    ActionBasisAllocation,
+    ActionConsiderationFact,
+    ActionInstrumentFact,
     CorporateAction,
     DatasetVersion,
     FxRate,
@@ -2514,6 +2517,154 @@ class Store:
                 },
             )
 
+    def add_generalized_corporate_action(
+        self,
+        *,
+        event_id: str,
+        action_type: str,
+        effective_at: str,
+        known_at: str,
+        recorded_at: str,
+        description: str,
+        provenance: str,
+        source_artifact_id: str,
+        import_batch_id: str,
+        instruments: list[ActionInstrumentFact],
+        considerations: list[ActionConsiderationFact],
+        transactions: list[Transaction],
+        consequence_type: str,
+        basis_allocations: list[ActionBasisAllocation],
+        tax_profile_ref: str | None = None,
+        tax_interpretation: dict | None = None,
+    ) -> dict[str, Any]:
+        self.require_account(transactions[0].account_id)
+        consequence_ids: list[str] = []
+        with self.db:
+            self.db.execute(
+                "INSERT INTO corporate_action_events"
+                "(id,action_type,effective_at,known_at,recorded_at,description,provenance,"
+                " source_artifact_id,import_batch_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id,
+                    action_type,
+                    canonical_timestamp(effective_at),
+                    canonical_timestamp(known_at),
+                    canonical_timestamp(recorded_at),
+                    description,
+                    provenance,
+                    source_artifact_id,
+                    import_batch_id,
+                ),
+            )
+            for item in instruments:
+                self.db.execute(
+                    "INSERT INTO corporate_action_event_instruments"
+                    "(id,event_id,sequence,role,instrument_id,ratio_numerator,ratio_denominator)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        event_id,
+                        item.sequence,
+                        item.role,
+                        item.instrument_id,
+                        None if item.ratio_numerator is None else canonical_decimal(item.ratio_numerator),
+                        None if item.ratio_denominator is None else canonical_decimal(item.ratio_denominator),
+                    ),
+                )
+            for item in considerations:
+                self.db.execute(
+                    "INSERT INTO corporate_action_considerations"
+                    "(id,event_id,sequence,kind,instrument_id,currency,quantity,amount,election_key,provenance)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        event_id,
+                        item.sequence,
+                        item.kind,
+                        item.instrument_id,
+                        item.currency,
+                        None if item.quantity is None else canonical_decimal(item.quantity),
+                        None if item.amount is None else canonical_decimal(item.amount),
+                        item.election_key,
+                        item.provenance or provenance,
+                    ),
+                )
+            for transaction in transactions:
+                self._insert_transaction(transaction)
+                consequence_id = new_id()
+                consequence_ids.append(consequence_id)
+                self.db.execute(
+                    "INSERT INTO corporate_action_account_consequences"
+                    "(id,event_id,account_id,transaction_id,consequence_type,generated,recorded_at,provenance)"
+                    " VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        consequence_id,
+                        event_id,
+                        transaction.account_id,
+                        transaction.id,
+                        consequence_type,
+                        1,
+                        canonical_timestamp(recorded_at),
+                        provenance,
+                    ),
+                )
+                self._audit_transaction(transaction)
+            for sequence, allocation in enumerate(basis_allocations, 1):
+                self.db.execute(
+                    "INSERT INTO corporate_action_basis_allocations"
+                    "(id,consequence_id,sequence,source_instrument_id,destination_instrument_id,"
+                    " source_quantity,destination_quantity,source_basis,destination_basis,currency)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        consequence_ids[0],
+                        sequence,
+                        allocation.source_instrument_id,
+                        allocation.destination_instrument_id,
+                        canonical_decimal(allocation.source_quantity),
+                        canonical_decimal(allocation.destination_quantity),
+                        canonical_decimal(allocation.source_basis),
+                        canonical_decimal(allocation.destination_basis),
+                        allocation.currency,
+                    ),
+                )
+            if tax_profile_ref is not None and tax_interpretation is not None:
+                self.db.execute(
+                    "INSERT INTO corporate_action_tax_interpretations"
+                    "(id,consequence_id,account_id,tax_profile_ref,interpretation_json,"
+                    " source_artifact_id,import_batch_id,recorded_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        new_id(),
+                        consequence_id,
+                        transactions[0].account_id,
+                        tax_profile_ref,
+                        canonical_json(tax_interpretation),
+                        source_artifact_id,
+                        import_batch_id,
+                        canonical_timestamp(recorded_at),
+                    ),
+                )
+            append_audit_event(
+                self.db,
+                operation=f"ledger.record_{action_type}",
+                object_type="corporate_action_event",
+                object_id=event_id,
+                payload={
+                    "account_id": transactions[0].account_id,
+                    "action_type": action_type,
+                    "effective_at": canonical_timestamp(effective_at),
+                    "known_at": canonical_timestamp(known_at),
+                    "transaction_count": len(transactions),
+                    "consequence_type": consequence_type,
+                    "basis_allocation_count": len(basis_allocations),
+                },
+            )
+        return {
+            "event_id": event_id,
+            "consequence_id": consequence_ids[0],
+            "transaction_ids": [transaction.id for transaction in transactions],
+        }
+
     def _audit_transaction(self, transaction: Transaction) -> None:
         append_audit_event(
             self.db,
@@ -2645,6 +2796,40 @@ class Store:
         ).fetchone()
         if action is not None:
             result["corporate_action"] = dict(action)
+        consequence = self.db.execute(
+            "SELECT event_id, id AS consequence_id FROM corporate_action_account_consequences WHERE transaction_id=?",
+            (transaction_id,),
+        ).fetchone()
+        if consequence is not None:
+            event_id = consequence["event_id"]
+            event = self.db.execute(
+                "SELECT * FROM corporate_action_events WHERE id=?", (event_id,)
+            ).fetchone()
+            if event is not None:
+                action_event = dict(event)
+                action_event["instruments"] = [
+                    dict(row)
+                    for row in self.db.execute(
+                        "SELECT * FROM corporate_action_event_instruments WHERE event_id=? ORDER BY sequence",
+                        (event_id,),
+                    )
+                ]
+                action_event["considerations"] = [
+                    dict(row)
+                    for row in self.db.execute(
+                        "SELECT * FROM corporate_action_considerations WHERE event_id=? ORDER BY sequence",
+                        (event_id,),
+                    )
+                ]
+                action_event["basis_allocations"] = [
+                    dict(row)
+                    for row in self.db.execute(
+                        "SELECT * FROM corporate_action_basis_allocations"
+                        " WHERE consequence_id=? ORDER BY sequence",
+                        (consequence["consequence_id"],),
+                    )
+                ]
+                result["generalized_corporate_action"] = action_event
         transfer = self.db.execute(
             """SELECT * FROM security_transfers
                WHERE source_transaction_id=? OR destination_transaction_id=?""",
