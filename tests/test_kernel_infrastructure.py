@@ -61,6 +61,7 @@ def test_migrations_are_ordered_and_checksummed(tmp_path):
         (9, "research_evidence_graph", 64),
         (10, "research_temporal_links", 64),
         (11, "recommendation_lifecycle", 64),
+        (12, "historical_identifiers_and_generalized_corporate_actions", 64),
     ]
 
     store.db.execute("DROP TRIGGER schema_migrations_reject_update")
