@@ -1,27 +1,112 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from clausula.adapters.accounting import AccountingPolicyProjection
+
+from .accounting import AccountingService
 from .rebuild import LedgerRebuilder as _BaseLedgerRebuilder, RebuildError
 from .research import ResearchService
 from .research_ingest import ResearchIngestionService
 
 
 class LedgerRebuilder(_BaseLedgerRebuilder):
-    """Extend canonical rebuild with deterministic non-plain-text research extraction."""
+    """Extend canonical rebuild with deterministic extracted research and local policy state."""
 
     def rebuild(self) -> dict[str, Any]:
         result = super().rebuild()
-        # Raw `research-source` imports are immutable inputs. Their replay is
-        # owned by the later `research.ingest_source` event envelope, so the
-        # base rebuilder's generic unsupported-adapter diagnostic is expected.
+        # Raw research inputs and accounting-policy provenance are replayed by
+        # extension-owned contracts. Suppress only those expected diagnostics.
         result["warnings"] = [
             warning
             for warning in result.get("warnings", [])
-            if warning.get("adapter_name") != "research-source"
+            if warning.get("adapter_name")
+            not in {"research-source", "manual-accounting-policy"}
         ]
+        accounting = self._rebuild_accounting_policies(result["account_mapping"])
+        result["accounting_policy_mapping"] = accounting["mapping"]
+        result["accounting_policy_comparisons"] = accounting["comparisons"]
+        result["consistent"] = (
+            bool(result.get("consistent") or not result.get("warnings"))
+            and not result["warnings"]
+            and all(row["matches"] for row in accounting["comparisons"])
+        )
         return result
+
+    def _rebuild_accounting_policies(
+        self, account_mapping: dict[str, str]
+    ) -> dict[str, Any]:
+        if not hasattr(self.source, "db") or not hasattr(self.target, "db"):
+            return {"mapping": {}, "comparisons": []}
+        rows = self.source.db.execute(
+            """SELECT * FROM audit_events
+               WHERE object_type='accounting_policy_version'
+               ORDER BY sequence"""
+        ).fetchall()
+        if not rows:
+            return {"mapping": {}, "comparisons": []}
+        target_service = AccountingService(AccountingPolicyProjection(self.target))
+        mapping: dict[str, str] = {}
+        source_by_policy: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            source_by_policy.setdefault(row["object_id"], []).append(payload)
+        for source_policy_id, versions in source_by_policy.items():
+            ordered = sorted(versions, key=lambda item: int(item["version_number"]))
+            first = ordered[0]
+            target_account_id = account_mapping[first["account_id"]]
+            created = target_service.create_policy(
+                target_account_id,
+                first["effective_from"],
+                lot_method=first["lot_method"],
+                allow_short=bool(first["allow_short"]),
+                jurisdiction_profile=first["jurisdiction_profile"],
+                tax_profile_ref=first.get("tax_profile_ref"),
+                known_at=first["known_at"],
+            )
+            target_policy_id = created["policy_id"]
+            mapping[source_policy_id] = target_policy_id
+            for version in ordered[1:]:
+                target_service.add_version(
+                    target_policy_id,
+                    version["effective_from"],
+                    lot_method=version["lot_method"],
+                    allow_short=bool(version["allow_short"]),
+                    jurisdiction_profile=version["jurisdiction_profile"],
+                    tax_profile_ref=version.get("tax_profile_ref"),
+                    known_at=version["known_at"],
+                )
+        comparisons = []
+        target_projection = AccountingPolicyProjection(self.target)
+        for source_policy_id, versions in source_by_policy.items():
+            target_policy_id = mapping[source_policy_id]
+            target_versions = target_projection.versions(policy_id=target_policy_id)
+            source_semantics = [self._accounting_semantics(row) for row in versions]
+            target_semantics = [self._accounting_semantics(row) for row in target_versions]
+            comparisons.append(
+                {
+                    "source_policy_id": source_policy_id,
+                    "target_policy_id": target_policy_id,
+                    "source_count": len(source_semantics),
+                    "target_count": len(target_semantics),
+                    "matches": source_semantics == target_semantics,
+                }
+            )
+        return {"mapping": mapping, "comparisons": comparisons}
+
+    @staticmethod
+    def _accounting_semantics(row: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            int(row["version_number"]),
+            row["effective_from"],
+            row["known_at"],
+            row["lot_method"],
+            bool(row["allow_short"]),
+            row["jurisdiction_profile"],
+            row.get("tax_profile_ref"),
+        )
 
     def _replay_research_event(
         self,
