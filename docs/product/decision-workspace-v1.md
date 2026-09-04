@@ -1,0 +1,1 @@
+Decision Workspace v1 consists of material attention, recommendation inbox, evidence pressure, review queue, and explicit recommendation-to-decision lineage. See `decision-workspace.md` for normative semantics.
