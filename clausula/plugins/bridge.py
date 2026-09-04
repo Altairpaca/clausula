@@ -1,52 +1,45 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
-from clausula.capabilities import CapabilityPermissionError, CapabilityRegistry
+from clausula.capabilities import CapabilityRegistry
 
 from .manifest import PluginManifest
 
 
 class PluginPermissionError(PermissionError):
-    """A plugin attempted an undeclared capability or permission."""
+    """A plugin attempted an undeclared capability."""
 
 
 class CapabilityBridge:
-    """Expose only manifest-declared capabilities to a plugin."""
+    """Expose a fixed manifest capability/permission envelope to a plugin.
+
+    The plugin cannot choose a permission set per invocation and cannot assert
+    confirmation. Confirmation-required writes therefore fail closed until the
+    trusted host/daemon provides a separate approval path outside plugin code.
+    """
 
     def __init__(self, registry: CapabilityRegistry, manifest: PluginManifest):
         self.registry = registry
         self.manifest = manifest
+        self.permissions = frozenset(manifest.permissions)
 
     def invoke(
         self,
         capability: str,
         arguments: Mapping[str, Any] | None = None,
         *,
-        permissions: Iterable[str] | None = None,
-        confirmed: bool = False,
         dry_run: bool = False,
     ) -> Any:
         if capability not in self.manifest.capabilities:
             raise PluginPermissionError(
                 f"capability not declared by plugin: {capability}"
             )
-        requested = set(
-            self.manifest.permissions if permissions is None else permissions
+        return self.registry.execute(
+            capability,
+            arguments,
+            permissions=self.permissions,
+            confirmed=False,
+            dry_run=dry_run,
         )
-        undeclared = requested - set(self.manifest.permissions)
-        if undeclared:
-            raise PluginPermissionError(
-                f"permissions not declared by plugin: {', '.join(sorted(undeclared))}"
-            )
-        try:
-            return self.registry.execute(
-                capability,
-                arguments,
-                permissions=requested,
-                confirmed=confirmed,
-                dry_run=dry_run,
-            )
-        except CapabilityPermissionError:
-            raise
