@@ -6,6 +6,7 @@ from typing import Any, Mapping, Sequence
 from clausula.analytics.policy import evaluate_policy
 from clausula.domain import PolicyRule, canonical_decimal, canonical_timestamp, dec
 
+from .execution import ExecutionService
 from .ports import CoreRepository
 from .portfolio import PortfolioService
 
@@ -140,17 +141,16 @@ def derive_risk_headroom(policies: Sequence[Mapping[str, Any]]) -> list[dict[str
 
 
 class CapitalCockpitService:
-    """Build one deterministic read snapshot for the local decision workspace.
+    """Build one deterministic read snapshot for the local decision workspace."""
 
-    The read model deliberately values the portfolio once, then evaluates every
-    applicable policy against that same immutable valuation. This avoids the
-    UI-triggered repeated valuation work that would occur if each policy were
-    evaluated through an independent capability call.
-    """
-
-    def __init__(self, repository: CoreRepository):
+    def __init__(self, repository: CoreRepository, *, execution_repository=None):
         self.repository = repository
         self.portfolios = PortfolioService(repository)
+        self.execution = (
+            None
+            if execution_repository is None
+            else ExecutionService(execution_repository)
+        )
 
     def snapshot(
         self,
@@ -215,6 +215,38 @@ class CapitalCockpitService:
                 }
             )
 
+        plans = [dict(row) for row in self.repository.plans(portfolio_id)]
+        execution: dict[str, Any]
+        if self.execution is None:
+            execution = {
+                "contract": None,
+                "latest_plan": None,
+                "status": "unavailable",
+                "reason": "execution repository projection is not configured",
+            }
+        else:
+            contract = self.execution.active(
+                portfolio_id,
+                effective_cutoff,
+                known_as_of=knowledge_cutoff,
+            )
+            latest_plan = None
+            if plans:
+                latest_plan = self.execution.evaluate_plan(plans[-1]["id"])
+            execution = {
+                "contract": contract,
+                "latest_plan": latest_plan,
+                "status": (
+                    "unconfigured"
+                    if contract is None
+                    else (
+                        latest_plan["status"]
+                        if latest_plan is not None
+                        else "configured"
+                    )
+                ),
+            }
+
         return {
             "format": "clausula-capital-cockpit-v1",
             "portfolio": {
@@ -228,7 +260,8 @@ class CapitalCockpitService:
             "policies": policies,
             "capital_envelope": derive_capital_envelope(valuation, policies),
             "risk_headroom": derive_risk_headroom(policies),
-            "plans": [dict(row) for row in self.repository.plans(portfolio_id)],
+            "execution": execution,
+            "plans": plans,
             "decisions": [dict(row) for row in self.repository.decisions(portfolio_id)],
         }
 

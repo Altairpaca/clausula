@@ -6,6 +6,7 @@ import threading
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from clausula.adapters.execution import ExecutionRepositoryProjection
 from clausula.application import CoreRepository
 from clausula.application.cockpit import CapitalCockpitService
 from clausula.capabilities import (
@@ -32,7 +33,12 @@ HTML_CSP = (
 
 def create_server(repository: CoreRepository) -> ThreadingHTTPServer:
     registry = build_core_registry(repository)
-    cockpit = CapitalCockpitService(repository)
+    execution_repository = (
+        ExecutionRepositoryProjection(repository) if hasattr(repository, "db") else None
+    )
+    cockpit = CapitalCockpitService(
+        repository, execution_repository=execution_repository
+    )
     registry_lock = threading.RLock()
 
     class CapabilityHandler(BaseHTTPRequestHandler):

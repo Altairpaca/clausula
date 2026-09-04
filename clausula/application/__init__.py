@@ -22,6 +22,7 @@ from .planning import PlanningError, PlanningService
 from .decision import DecisionError, DecisionService
 from .research import ResearchError, ResearchService
 from .recommendation import RecommendationService
+from .execution import ExecutionContractError, ExecutionService
 
 __all__ = [
     "CoreRepository",
@@ -41,4 +42,6 @@ __all__ = [
     "ResearchError",
     "ResearchService",
     "RecommendationService",
+    "ExecutionContractError",
+    "ExecutionService",
 ]
