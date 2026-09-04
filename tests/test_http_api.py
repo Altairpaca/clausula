@@ -29,6 +29,30 @@ def _request(url: str, method: str = "GET", payload: dict | None = None, permiss
         return error.code, json.loads(error.read())
 
 
+def test_http_serves_read_only_capital_cockpit_with_security_headers(tmp_path) -> None:
+    server = create_server(Store(tmp_path / "home"))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(f"{base}/") as response:
+            document = response.read().decode("utf-8")
+            assert response.status == 200
+            assert response.headers["Content-Type"].startswith("text/html")
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["X-Content-Type-Options"] == "nosniff"
+            assert response.headers["X-Frame-Options"] == "DENY"
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+            assert "Capital Cockpit" in document
+            assert "LOCAL · READ ONLY" in document
+            assert "Known as of" in document
+            assert "recommendation.transition" not in document
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_http_projects_registry_and_enforces_write_contract(tmp_path) -> None:
     server = create_server(Store(tmp_path / "home"))
     thread = Thread(target=server.serve_forever, daemon=True)
