@@ -1,13 +1,15 @@
 """Local read-only user surfaces for Clausula."""
 
 from .decision_overlay import augment_decision_workspace
+from .equity_overlay import augment_equity_monitor
 from .execution_overlay import augment_workspace
 from .workspace import workspace_document as _workspace_document
 
 
 def workspace_document() -> str:
     document = augment_workspace(_workspace_document())
-    return augment_decision_workspace(document)
+    document = augment_decision_workspace(document)
+    return augment_equity_monitor(document)
 
 
 __all__ = ["workspace_document"]
