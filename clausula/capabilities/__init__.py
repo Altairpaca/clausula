@@ -1,3 +1,4 @@
+from .accounting import register_accounting_capabilities
 from .core import build_core_registry as _build_core_registry
 from .equity_monitor import register_equity_monitor_capabilities
 from .execution import register_execution_capabilities
@@ -20,6 +21,7 @@ def build_core_registry(repository):
     # making monitoring, research extraction, or configuration state canonical
     # financial truth.
     if hasattr(repository, "db"):
+        register_accounting_capabilities(registry, repository)
         register_execution_capabilities(registry, repository)
         register_market_intelligence_capabilities(registry, repository)
         register_research_ingestion_capabilities(registry, repository)
