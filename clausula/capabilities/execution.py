@@ -120,17 +120,19 @@ def register_execution_capabilities(
                 },
                 required=("portfolio_id", "as_of"),
             ),
-            {"type": ["object", "null"]},
+            object_schema({"contract": {"type": ["object", "null"]}}, required=("contract",)),
             "read",
             True,
             SideEffect.LOCAL_READ,
             ("execution:read",),
             False,
-            "Selects one version by effective and known cutoffs; never infers a missing contract.",
+            "Selects one version by effective and known cutoffs; an absent contract is explicit as contract=null.",
         ),
-        lambda portfolio_id, as_of, known_as_of=None: service.active(
-            portfolio_id, as_of, known_as_of=known_as_of
-        ),
+        lambda portfolio_id, as_of, known_as_of=None: {
+            "contract": service.active(
+                portfolio_id, as_of, known_as_of=known_as_of
+            )
+        },
     )
     registry.register(
         CapabilitySpec(
