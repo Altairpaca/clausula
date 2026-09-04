@@ -8,6 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+research = ["pypdf>=5,<7"]
+
 [project.scripts]
 clausula = "clausula.cli:main"
 clausula-workspace = "clausula.api.workspace:main"
