@@ -44,7 +44,7 @@ def test_accounting_policy_is_temporal_and_fail_closed(tmp_path: Path) -> None:
         "2026-01-01",
         lot_method="fifo",
         allow_short=False,
-        jurisdiction_profile="HK-brokerage-profile",
+        jurisdiction_profile="HK",
         tax_profile_ref="local://tax/hk-v1",
         known_at="2026-02-01",
         recorded_at="2026-02-01",
@@ -212,7 +212,8 @@ def test_accounting_policy_survives_clean_rebuild(tmp_path: Path) -> None:
         "2026-01-01",
         lot_method="hifo",
         allow_short=True,
-        jurisdiction_profile="configured-local-profile",
+        jurisdiction_profile="CN",
+        tax_profile_ref="local://tax/cn-v1",
         known_at="2026-01-01",
         recorded_at="2026-01-01",
     )

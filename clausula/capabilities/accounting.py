@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from clausula.adapters.accounting import AccountingPolicyProjection
-from clausula.application.accounting import AccountingService
+from clausula.application.accounting import (
+    AccountingService,
+    DEFAULT_JURISDICTION_PROFILE,
+)
 
 from .registry import CapabilityRegistry, CapabilitySpec, SideEffect, object_schema
 
@@ -38,7 +41,7 @@ def register_accounting_capabilities(registry: CapabilityRegistry, repository) -
             True,
             "Stores a versioned audit-backed accounting policy with immutable source provenance. Tax law remains an external typed profile, not a hidden default.",
         ),
-        lambda account_id, effective_from, lot_method="fifo", allow_short=False, jurisdiction_profile="unspecified", tax_profile_ref=None, known_at=None, recorded_at=None: service.create_policy(
+        lambda account_id, effective_from, lot_method="fifo", allow_short=False, jurisdiction_profile=DEFAULT_JURISDICTION_PROFILE, tax_profile_ref=None, known_at=None, recorded_at=None: service.create_policy(
             account_id,
             effective_from,
             lot_method=lot_method,
