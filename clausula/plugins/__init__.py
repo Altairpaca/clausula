@@ -9,6 +9,7 @@ from .catalog import (
 )
 from .host_policy import PluginHostPolicy, PluginHostPolicyError
 from .manifest import PluginManifest, PluginType
+from .runner import PluginRunner, PluginRunnerError, PluginSubprocessResult
 
 __all__ = [
     "CapabilityBridge",
@@ -20,5 +21,8 @@ __all__ = [
     "PluginManifest",
     "PluginPackage",
     "PluginPermissionError",
+    "PluginRunner",
+    "PluginRunnerError",
+    "PluginSubprocessResult",
     "PluginType",
 ]
