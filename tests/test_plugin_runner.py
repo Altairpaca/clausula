@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,11 @@ from clausula.plugins.runner import (
     PluginRunner,
     PluginRunnerError,
     PluginSubprocessResult,
+)
+
+requires_bwrap = pytest.mark.skipif(
+    shutil.which("bwrap") is None,
+    reason="bubblewrap is required to exercise the sandboxed subprocess",
 )
 
 
@@ -40,6 +46,7 @@ def _reader_plugin(tmp_path: Path) -> Path:
     return plugin
 
 
+@requires_bwrap
 def test_runner_executes_declared_read_capability_in_subprocess(
     tmp_path: Path,
 ) -> None:
@@ -53,6 +60,7 @@ def test_runner_executes_declared_read_capability_in_subprocess(
     assert result.output.get("documents") == []
 
 
+@requires_bwrap
 def test_runner_rejects_undeclared_capability_in_subprocess(tmp_path: Path) -> None:
     store = Store(tmp_path / "home")
     registry = build_core_registry(store)
@@ -92,6 +100,7 @@ def test_runner_host_policy_rejects_unapproved_manifest(tmp_path: Path) -> None:
         runner.run(manifest, _reader_plugin(tmp_path), timeout_seconds=5)
 
 
+@requires_bwrap
 def test_runner_times_out_on_hung_plugin(tmp_path: Path) -> None:
     store = Store(tmp_path / "home")
     registry = build_core_registry(store)
@@ -108,6 +117,7 @@ def test_runner_times_out_on_hung_plugin(tmp_path: Path) -> None:
         runner.run(_reader_manifest(), plugin, timeout_seconds=2)
 
 
+@requires_bwrap
 def test_runner_enforces_filesystem_envelope_at_os_layer(tmp_path: Path) -> None:
     store = Store(tmp_path / "home")
     registry = build_core_registry(store)
