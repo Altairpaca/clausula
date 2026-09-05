@@ -2,35 +2,42 @@
 
 ## Objective
 
-Turn reliable accounting and market data primitives into reproducible research workflows.
+Turn reliable accounting and market-data primitives into reproducible research workflows without allowing opaque model output to bypass evidence and decision boundaries.
 
 ## Workflow objects
 
-A future workflow should connect:
-
 ```text
-portfolio state
-    +
-market snapshot
-    +
-thesis record
-    +
-analysis artifact
-    -> reproducible decision context
+portfolio / market / thesis inputs
+        + effective_at
+        + known_at
+        + sha256 provenance
+             ↓
+      WorkflowRun(as_of)
+             ↓
+ deterministic input fingerprint
+             ↓
+ analysis / report / decision-input artifact
 ```
 
-## Constraints
+The workflow fingerprint excludes run UUID and execution wall-clock timestamps. Two later reproductions with the same workflow ID, information cut-off and exact evidence inputs therefore produce the same content identity even if they execute at different times.
 
-- preserve point-in-time semantics;
-- keep source provenance attached;
-- separate deterministic calculations from optional AI assistance;
-- avoid hidden investment decisions generated from opaque heuristics.
+## Evidence rules
+
+- `effective_at <= known_at <= as_of`: no hindsight;
+- every input and artifact is content-addressed with SHA-256;
+- an artifact may use a subset of run inputs but may not introduce an unrecorded digest;
+- artifacts must be generated after run start and, for completed runs, no later than `completed_at`;
+- input ordering does not change the reproducibility fingerprint;
+- changing an input digest changes the fingerprint.
 
 ## Initial workflow candidates
 
 - portfolio review;
 - event-driven security analysis;
 - factor research artifact generation;
-- investment thesis tracking.
+- investment thesis tracking;
+- evidence packages consumed by later decision/policy layers.
 
-The workflow layer builds on accounting correctness and provider provenance already established in the core system.
+## AI boundary
+
+Optional AI components may produce artifacts, summaries or candidate analysis, but they inherit the same input/provenance contract. Model output does not acquire transaction authority simply by being attached to a workflow. Trade decisions remain governed by the existing decision/policy/execution layers.
