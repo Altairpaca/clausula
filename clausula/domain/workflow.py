@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
+import json
 from typing import Iterable
 
 from .common import DomainValidationError, canonical_timestamp, require_uuid
@@ -147,9 +149,47 @@ def input_digest_set(inputs: Iterable[WorkflowInputRef]) -> frozenset[str]:
     return frozenset(item.sha256 for item in inputs)
 
 
+def workflow_fingerprint(run: WorkflowRun) -> str:
+    """Content identity for reproducible inputs; excludes execution UUIDs and wall-clock runtime."""
+
+    normalized_inputs = sorted(
+        (
+            item.kind,
+            item.object_id,
+            item.effective_at,
+            item.known_at,
+            item.sha256,
+        )
+        for item in run.inputs
+    )
+    payload = {
+        "schema": "clausula.workflow-inputs/v1",
+        "workflow_id": run.workflow_id,
+        "as_of": run.as_of,
+        "inputs": normalized_inputs,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def verify_artifact_inputs(run: WorkflowRun, artifact: WorkflowArtifact) -> bool:
     """An artifact may consume a subset of run inputs, but never unrecorded inputs."""
 
     if artifact.run_id != run.id:
         return False
     return set(artifact.input_sha256s).issubset(input_digest_set(run.inputs))
+
+
+def verify_artifact_temporal(run: WorkflowRun, artifact: WorkflowArtifact) -> bool:
+    """Artifacts belong to the execution window, not to hindsight before/after the recorded run."""
+
+    generated = _utc(artifact.generated_at)
+    if generated < _utc(run.started_at):
+        return False
+    if run.completed_at is not None and generated > _utc(run.completed_at):
+        return False
+    return True
+
+
+def verify_workflow_artifact(run: WorkflowRun, artifact: WorkflowArtifact) -> bool:
+    return verify_artifact_inputs(run, artifact) and verify_artifact_temporal(run, artifact)
