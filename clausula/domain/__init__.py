@@ -83,6 +83,9 @@ from .workflow import (
     assert_point_in_time,
     input_digest_set,
     verify_artifact_inputs,
+    verify_artifact_temporal,
+    verify_workflow_artifact,
+    workflow_fingerprint,
 )
 
 __all__ = [
@@ -137,6 +140,9 @@ __all__ = [
     "assert_point_in_time",
     "input_digest_set",
     "verify_artifact_inputs",
+    "verify_artifact_temporal",
+    "verify_workflow_artifact",
+    "workflow_fingerprint",
     "ValuationGap",
     "ImportBatchRef",
     "CorporateAction",
