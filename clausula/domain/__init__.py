@@ -75,6 +75,15 @@ from .recommendation import (
     RecommendationOrigin,
     RecommendationStatus,
 )
+from .workflow import (
+    InvestmentWorkflow,
+    WorkflowArtifact,
+    WorkflowInputRef,
+    WorkflowRun,
+    assert_point_in_time,
+    input_digest_set,
+    verify_artifact_inputs,
+)
 
 __all__ = [
     "DomainValidationError",
@@ -121,6 +130,13 @@ __all__ = [
     "RecommendationAlternative",
     "RecommendationOrigin",
     "RecommendationStatus",
+    "InvestmentWorkflow",
+    "WorkflowArtifact",
+    "WorkflowInputRef",
+    "WorkflowRun",
+    "assert_point_in_time",
+    "input_digest_set",
+    "verify_artifact_inputs",
     "ValuationGap",
     "ImportBatchRef",
     "CorporateAction",
