@@ -11,6 +11,9 @@ from .ledger_fast import LedgerService
 
 ACCOUNTING_EVENT_FORMAT = "clausula-accounting-policy-v1"
 
+JURISDICTION_PROFILES = ("CN", "HK", "US")
+DEFAULT_JURISDICTION_PROFILE = "CN"
+
 
 class AccountingPolicyError(ValueError):
     pass
@@ -46,7 +49,7 @@ class AccountingService:
         *,
         lot_method: str = "fifo",
         allow_short: bool = False,
-        jurisdiction_profile: str = "unspecified",
+        jurisdiction_profile: str = DEFAULT_JURISDICTION_PROFILE,
         tax_profile_ref: str | None = None,
         known_at: str | None = None,
         recorded_at: str | None = None,
@@ -123,6 +126,11 @@ class AccountingService:
         jurisdiction = self._text(jurisdiction_profile, "jurisdiction_profile")
         if jurisdiction is None:
             raise AccountingPolicyError("jurisdiction_profile cannot be empty")
+        normalized_jurisdiction = jurisdiction.upper()
+        if normalized_jurisdiction not in JURISDICTION_PROFILES:
+            raise AccountingPolicyError(
+                f"jurisdiction_profile must be one of {', '.join(JURISDICTION_PROFILES)}"
+            )
         effective = canonical_timestamp(effective_from)
         recorded = canonical_timestamp(recorded_at or now())
         knowledge = canonical_timestamp(known_at or recorded)
@@ -139,7 +147,7 @@ class AccountingService:
             "known_at": knowledge,
             "lot_method": method,
             "allow_short": allow_short,
-            "jurisdiction_profile": jurisdiction,
+            "jurisdiction_profile": normalized_jurisdiction,
             "tax_profile_ref": self._text(tax_profile_ref, "tax_profile_ref"),
         }
         provenance = json.dumps(payload, sort_keys=True, separators=(",", ":"))
