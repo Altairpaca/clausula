@@ -5,13 +5,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from clausula.domain import (
-    InstrumentIdentifier,
-    Transaction,
-    TransactionLeg,
-    canonical_decimal,
-    new_id,
-)
+from clausula.domain import Transaction, TransactionLeg, canonical_decimal, new_id
 
 from .ledger import CSV_ADAPTER_VERSION, CSV_SCHEMA_VERSION, ImportValidationError
 from .ledger_fast import LedgerService as _FastLedgerService
@@ -39,7 +33,7 @@ def _generic_existing_transactions(
     """Portable fallback over existing public provenance projections.
 
     The optimized public Store exposes `imported_external_transactions()` and
-    avoids this catalog walk.  The fallback keeps third-party repositories able
+    avoids this catalog walk. The fallback keeps third-party repositories able
     to participate in read-only reconciliation without acquiring a SQLite
     dependency in the application layer.
     """
@@ -89,33 +83,33 @@ def _load_existing_transactions(
 
 def _parsed_instrument_key(
     repository: CoreRepository, instrument: ParsedInstrument | None
-) -> tuple[str, str] | None:
+) -> str:
     if instrument is None:
-        return None
+        return "cash:"
     resolver = getattr(repository, "instrument_id_for_identifier", None)
     if resolver is not None:
         instrument_id = resolver(instrument.scheme, instrument.identifier)
         if instrument_id is not None:
-            return ("id", str(instrument_id))
+            return f"id:{instrument_id}"
     return (
-        "external",
-        f"{instrument.scheme.strip().lower()}:{instrument.identifier.strip()}",
+        "external:"
+        f"{instrument.scheme.strip().lower()}:{instrument.identifier.strip()}"
     )
 
 
 def _stored_instrument_key(
     repository: CoreRepository, instrument_id: str | None
-) -> tuple[str, str] | None:
+) -> str:
     if instrument_id is None:
-        return None
+        return "cash:"
     if getattr(repository, "instrument_id_for_identifier", None) is not None:
         # Public Store reconciliation uses canonical UUID identity, so aliases
         # of the same security do not manufacture a conflict.
-        return ("id", str(instrument_id))
+        return f"id:{instrument_id}"
     details = repository.instrument_details(str(instrument_id))
     return (
-        "external",
-        f"{str(details['scheme']).strip().lower()}:{str(details['identifier']).strip()}",
+        "external:"
+        f"{str(details['scheme']).strip().lower()}:{str(details['identifier']).strip()}"
     )
 
 
@@ -248,7 +242,7 @@ def commit_reconciled_csv_import(
         raise _first_error(preview)
 
     # A repository that can classify account-scoped imported events is required
-    # to safely accept a changed artifact containing old IDs.  Purely new files
+    # to safely accept a changed artifact containing old IDs. Purely new files
     # remain compatible with the portable baseline repository contract.
     if (
         preview["reconciliation"][IMPORT_DUPLICATE_EXACT]
@@ -265,7 +259,7 @@ def commit_reconciled_csv_import(
         )
 
     with repository.write_transaction():
-        # Reconcile again inside the write boundary.  This is both a stale-preview
+        # Reconcile again inside the write boundary. This is both a stale-preview
         # guard and the last chance to fail before artifact/instrument publication.
         inside = reconcile_csv_plan(repository, account_id, plan)
         if not inside["ok"]:
