@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 
 from clausula.adapters.equity_case import EquityCaseProjection
@@ -31,6 +31,10 @@ from .import_preview import (
     MAX_IMPORT_PREVIEW_REQUEST_BYTES,
     preview_uploaded_csv,
 )
+from .workspace_session import (
+    WorkspaceSessionError,
+    WorkspaceSessionRegistry,
+)
 
 
 HTML_CSP = (
@@ -44,17 +48,22 @@ HTML_CSP = (
     "script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline'"
 )
+WORKSPACE_SESSION_REQUEST_BYTES = 8192
 
 
 def create_server(
     repository: CoreRepository,
     *,
     auth: LocalAuthRegistry | None = None,
+    workspace_sessions: WorkspaceSessionRegistry | None = None,
 ) -> ThreadingHTTPServer:
     """Create the loopback projection with one process-local auth/write owner."""
 
     registry = build_core_registry(repository)
     auth_registry = auth or LocalAuthRegistry.ephemeral_default()
+    workspace_registry = workspace_sessions or WorkspaceSessionRegistry(
+        scopes=("ledger-import",)
+    )
     execution_repository = (
         ExecutionRepositoryProjection(repository) if hasattr(repository, "db") else None
     )
@@ -101,6 +110,9 @@ def create_server(
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if path == "/workspace/session":
+                self._workspace_session_exchange()
+                return
             if path == "/workspace/snapshot":
                 self._workspace_snapshot()
                 return
@@ -115,6 +127,51 @@ def create_server(
                 self._invoke_capability(unquote(path.removeprefix(prefix)))
                 return
             self._send_error(404, "not_found", "resource not found")
+
+        def _workspace_session_exchange(self) -> None:
+            if not self._require_json_media_type("workspace session exchange"):
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send_error(400, "invalid_content_length", "Content-Length must be an integer")
+                return
+            if size < 0:
+                self._send_error(400, "invalid_content_length", "Content-Length must not be negative")
+                return
+            if size > WORKSPACE_SESSION_REQUEST_BYTES:
+                self._send_error(
+                    413,
+                    "workspace_session_payload_too_large",
+                    f"workspace session request is limited to {WORKSPACE_SESSION_REQUEST_BYTES} bytes",
+                )
+                return
+            try:
+                payload = self._read_json_object()
+                unexpected = set(payload) - {"bootstrap_token"}
+                if unexpected:
+                    raise ValueError(
+                        f"unknown workspace session fields: {', '.join(sorted(unexpected))}"
+                    )
+                token = payload.get("bootstrap_token")
+                if not isinstance(token, str) or not token:
+                    raise ValueError("bootstrap_token is required")
+                session = workspace_registry.exchange(token)
+            except WorkspaceSessionError as error:
+                self._send_error(403, "workspace_session_denied", str(error))
+                return
+            except (ValueError, json.JSONDecodeError) as error:
+                self._send_error(400, "invalid_workspace_session_request", str(error))
+                return
+            self._send(
+                200,
+                {
+                    "status": "authenticated",
+                    "expires_in_seconds": workspace_registry.session_ttl_seconds,
+                    "scopes": sorted(session.scopes),
+                },
+                extra_headers={"Set-Cookie": workspace_registry.cookie_header(session)},
+            )
 
         def _workspace_snapshot(self) -> None:
             # Intentionally anonymous and read-only. This route bypasses the
@@ -151,13 +208,7 @@ def create_server(
             self._send(200, result)
 
         def _workspace_import_preview(self) -> None:
-            media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-            if media_type != "application/json":
-                self._send_error(
-                    415,
-                    "unsupported_media_type",
-                    "workspace import preview requires application/json",
-                )
+            if not self._require_json_media_type("workspace import preview"):
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
@@ -324,6 +375,19 @@ def create_server(
                 self.headers.get("Authorization")
             )
 
+        def _require_json_media_type(self, operation: str) -> bool:
+            media_type = (
+                self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            )
+            if media_type == "application/json":
+                return True
+            self._send_error(
+                415,
+                "unsupported_media_type",
+                f"{operation} requires application/json",
+            )
+            return False
+
         def log_message(self, format: str, *args: Any) -> None:
             return
 
@@ -340,10 +404,18 @@ def create_server(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
 
-        def _send(self, status: int, payload: Any) -> None:
+        def _send(
+            self,
+            status: int,
+            payload: Any,
+            *,
+            extra_headers: Mapping[str, str] | None = None,
+        ) -> None:
             data = json.dumps(payload, default=str, sort_keys=True).encode("utf-8")
             self.send_response(status)
             self._common_headers()
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -363,7 +435,9 @@ def create_server(
             self._send(status, {"error": code, "message": message})
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), CapabilityHandler)
-    # Process-local bootstrap access for CLI/workspace launchers and tests. There
-    # is deliberately no HTTP endpoint that returns these bearer tokens.
+    # Process-local bootstrap access for launchers/tests only. Generic capability
+    # bearer tokens and the one-time workspace bootstrap remain separate models.
     server.clausula_auth = auth_registry  # type: ignore[attr-defined]
+    server.clausula_workspace_sessions = workspace_registry  # type: ignore[attr-defined]
+    server.clausula_workspace_bootstrap = workspace_registry.bootstrap_token  # type: ignore[attr-defined]
     return server
