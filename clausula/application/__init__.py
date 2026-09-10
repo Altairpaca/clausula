@@ -19,6 +19,11 @@ from .market_provider import (
     ProviderSnapshot,
     ProviderSnapshotImporter,
 )
+from .provider_contract import (
+    ProviderContractIssue,
+    ProviderContractReport,
+    inspect_provider_snapshot,
+)
 from .portfolio_fast import PortfolioService
 from . import portfolio as _portfolio_module
 
@@ -45,9 +50,12 @@ __all__ = [
     "MarketImportError",
     "MarketProvider",
     "MarketService",
+    "ProviderContractIssue",
+    "ProviderContractReport",
     "ProviderPrice",
     "ProviderSnapshot",
     "ProviderSnapshotImporter",
+    "inspect_provider_snapshot",
     "ReturnSeriesRepository",
     "PortfolioService",
     "PolicyService",
