@@ -5,7 +5,7 @@
 # bounded read paths or add deterministic replay support.
 from .ledger import ImportValidationError
 from .ledger_import import CsvImportIssue, CsvImportPlan, parse_csv_content, parse_csv_import
-from .ledger_fast import LedgerService
+from .ledger_reconciled import LedgerService
 from . import ledger as _ledger_module
 
 _ledger_module.LedgerService = LedgerService
