@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from decimal import Decimal
 from typing import Any
 
 from .adapters.audit import append_audit_event
@@ -12,8 +13,8 @@ class Store(_BaseStore):
     """Public Store hardened for account-scoped external import identity.
 
     `imported_rows` remains the provenance relation between a source artifact and
-    an already-canonical transaction.  `transactions.external_id` is populated
-    for new imported events as defense in depth.  Historical rows whose
+    an already-canonical transaction. `transactions.external_id` is populated
+    for new imported events as defense in depth. Historical rows whose
     transaction column is NULL remain discoverable through `imported_rows`.
     """
 
@@ -105,7 +106,7 @@ class Store(_BaseStore):
     def _domain_import_semantic(transaction: Transaction) -> tuple[Any, ...]:
         legs = sorted(
             (
-                leg.instrument_id,
+                "cash:" if leg.instrument_id is None else f"id:{leg.instrument_id}",
                 canonical_decimal(leg.quantity),
                 canonical_decimal(leg.amount),
                 leg.currency,
@@ -124,9 +125,11 @@ class Store(_BaseStore):
     def _stored_import_semantic(transaction: dict[str, Any]) -> tuple[Any, ...]:
         legs = sorted(
             (
-                leg["instrument_id"],
-                canonical_decimal(leg["quantity"]),
-                canonical_decimal(leg["amount"]),
+                "cash:"
+                if leg["instrument_id"] is None
+                else f"id:{leg['instrument_id']}",
+                canonical_decimal(Decimal(str(leg["quantity"]))),
+                canonical_decimal(Decimal(str(leg["amount"]))),
                 str(leg["currency"]).upper(),
                 str(leg["leg_type"]).lower(),
             )
@@ -255,7 +258,7 @@ class Store(_BaseStore):
         pending: list[tuple[Transaction, str]] = []
         duplicates: list[tuple[Transaction, str, str]] = []
 
-        # Reconcile while the caller's write transaction is active.  The daemon
+        # Reconcile while the caller's write transaction is active. The daemon
         # serializes writes; this second check protects against stale previews.
         for transaction, raw_external_id in materialized:
             external_id = str(raw_external_id).strip()
@@ -283,7 +286,7 @@ class Store(_BaseStore):
                 len(pending),
             )
             # A changed export may contain an exact event already accepted from
-            # another artifact.  Preserve the new artifact/event provenance edge
+            # another artifact. Preserve the new artifact/event provenance edge
             # without creating a second economic transaction.
             for transaction, external_id, existing_transaction_id in duplicates:
                 self.db.execute(
