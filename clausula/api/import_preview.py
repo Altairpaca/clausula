@@ -5,6 +5,7 @@ import binascii
 from typing import Any, Mapping
 
 from clausula.application import parse_csv_content
+from clausula.application.ledger_reconciled import reconcile_csv_plan
 
 
 MAX_IMPORT_PREVIEW_BYTES = 2 * 1024 * 1024
@@ -15,8 +16,8 @@ class ImportPreviewRequestError(ValueError):
     pass
 
 
-def preview_uploaded_csv(payload: Mapping[str, Any]) -> dict[str, Any]:
-    unexpected = set(payload) - {"filename", "content_base64"}
+def _decode_uploaded_csv(payload: Mapping[str, Any]) -> tuple[str, bytes]:
+    unexpected = set(payload) - {"account_id", "filename", "content_base64"}
     if unexpected:
         raise ImportPreviewRequestError(
             f"unknown preview fields: {', '.join(sorted(unexpected))}"
@@ -37,8 +38,43 @@ def preview_uploaded_csv(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ImportPreviewRequestError(
             f"CSV preview is limited to {MAX_IMPORT_PREVIEW_BYTES} bytes"
         )
+    return filename, raw
 
-    result = parse_csv_content(raw).as_dict()
+
+def _browser_safe_reconciliation(result: dict[str, Any]) -> dict[str, Any]:
+    """Remove canonical transaction identifiers from the anonymous projection."""
+
+    transactions = []
+    for transaction in result.get("transactions", ()):
+        item = dict(transaction)
+        item.pop("existing_transaction_ids", None)
+        transactions.append(item)
+    return {**result, "transactions": transactions}
+
+
+def preview_uploaded_csv(
+    payload: Mapping[str, Any], repository=None
+) -> dict[str, Any]:
+    """Preview uploaded CSV bytes; optionally reconcile against one account.
+
+    The repository-free mode remains useful for parser/size unit tests. The
+    browser HTTP route always supplies the repository and therefore requires an
+    account ID before it can claim import status.
+    """
+
+    filename, raw = _decode_uploaded_csv(payload)
+    plan = parse_csv_content(raw)
+    if repository is None:
+        result = plan.as_dict()
+    else:
+        account_id = payload.get("account_id")
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ImportPreviewRequestError("account_id is required")
+        try:
+            result = reconcile_csv_plan(repository, account_id.strip(), plan)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ImportPreviewRequestError(str(exc)) from exc
+        result = _browser_safe_reconciliation(result)
     result["filename"] = filename
     result["upload_bytes"] = len(raw)
     return result
