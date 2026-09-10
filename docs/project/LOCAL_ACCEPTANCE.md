@@ -1,12 +1,11 @@
 # Clausula Local Acceptance and First-Release Gate
 
-This document starts where GitHub-testable implementation ends. Do not mark an item complete from synthetic CI alone when the acceptance criterion depends on repository settings, the target operating system, a real multi-process runtime, private/local data, external providers or a new forward migration.
+This document starts where deterministic GitHub CI ends. Do not mark host-, OS-, private-data- or provider-dependent behavior complete from synthetic tests alone.
 
-The first tagged release is blocked until #6, #21, #23 and #34 are either completed or deliberately removed from the release scope with an explicit rationale.
+As of 2026-09-10, repository protection (#6) and the accounting v12 migration/corporate-action work (#21) are complete. The first stable tag is blocked principally on #23 and #34.
 
-## 0. Baseline before local work
-
-Use a fresh checkout of protected/current `main` and preserve a clean baseline:
+## 0. Baseline before local acceptance
+Use a fresh checkout of protected `main` and preserve a clean evidence baseline:
 
 ```bash
 git fetch --all --prune
@@ -24,213 +23,57 @@ git diff --check
 git status --short
 ```
 
-Required evidence: baseline commit SHA, Python version, OS, test result and build result. Do not commit local credentials, databases, private corpus files or provider payloads containing confidential information.
+Record commit SHA, Python version, OS, test result and build result. Never commit credentials, runtime databases, private research files or confidential provider payloads.
 
-## 1. #6 — Protect `main` and require CI
+## 1. Completed gates retained as evidence
 
-This is a GitHub repository-setting task, not application code.
+### #6 — protected main
+The `protect-main` ruleset has been verified with real direct/force-push rejection. Pull requests and strict Python 3.12/3.13 CI are required; deletion/non-fast-forward updates are blocked. No further application work is required unless repository settings regress.
 
-Required configuration:
+### #21 — accounting v12
+Forward migration v12, historical identifier validity, point-in-time resolution and generalized corporate actions are implemented. Migration/rebuild/backup evidence exists and corporate-action replay received a follow-up correctness repair. Jurisdiction/broker tax interpretation remains explicit local configuration and must not be inferred by the generic engine.
 
-- require pull requests before merge;
-- require the current CI checks before merge;
-- require an up-to-date branch where practical;
-- block force pushes and branch deletion;
-- avoid routine maintainer bypass;
-- keep GitHub Actions permissions least-privilege.
-
-Acceptance must test the rule rather than only inspect the UI:
-
-1. create a disposable branch/PR and confirm a green PR can merge through the normal path;
-2. attempt a direct push to `main` and confirm rejection;
-3. attempt a non-fast-forward/force update to `main` and confirm rejection;
-4. verify branch deletion protection;
-5. record the active ruleset/protection JSON or screenshots in a sanitized engineering note.
-
-Do not weaken the rule merely to make the acceptance test pass.
-
-## 2. #21 — Forward migration for durable accounting identity/actions
-
-This item requires local source editing because the existing migration ledger is checksum-frozen and the remaining work is schema-dependent.
-
-Implementation rules:
-
-- never edit frozen historical migrations/checksums in place;
-- add one or more forward migrations through the existing migration mechanism;
-- preserve rebuild/export/backup semantics;
-- preserve effective-time and knowledge-time semantics;
-- do not encode HK/CN/US tax law as global defaults.
-
-Required scope before closing #21:
-
-- historical instrument identifier validity ranges;
-- point-in-time identifier resolution;
-- generalized corporate actions needed by the release scope: merger, spin-off, exchange/election, symbol/security change and cash-in-lieu;
-- explicit basis allocation and generated fee/tax facts where applicable;
-- canonical specific-lot selection facts if specific identification is enabled;
-- reviewed local jurisdiction/broker tax-profile configuration rather than inferred tax behavior.
-
-Required tests:
-
-- migrate an existing pre-migration database forward without rewriting old facts;
-- clean database migration reaches the same schema;
-- old identifier resolves before a change and new identifier resolves only when valid/known;
-- corporate actions preserve quantity/value/basis invariants for representative long and short positions where supported;
-- rebuild/export/backup round trip preserves new facts;
-- audit chain remains valid.
-
-After implementation, push a normal PR and let GitHub CI review the resulting forward migration and regression suite.
-
-## 3. #23 — Real daemon/MCP/plugin host-runtime acceptance
-
-Synthetic unit tests already cover server-side permission binding, replay-resistant confirmation, daemon lease behavior, audit continuity, MCP/plugin self-assertion denial, package discovery and host-policy preflight. Local acceptance must test what CI cannot represent faithfully.
+## 2. #23 — real daemon/MCP/plugin host-runtime acceptance
+Synthetic tests already cover server-side permission binding, replay-resistant confirmation, daemon lease behavior, audit continuity, MCP/plugin self-assertion denial, package discovery and host-policy authorization. PR #44 also implements a Linux `bwrap` subprocess runner. Local acceptance must prove the real host boundary.
 
 ### Multi-process daemon ownership
-
-Use one disposable `CLAUSULA_HOME` and launch `clausula-daemon` as an independent process. From separate processes:
-
-- read through the workspace/HTTP surface;
-- invoke read-only capability clients with a read principal;
-- invoke confirmed writes with the intended Admin path;
-- attempt to start a second daemon against the same home and confirm rejection;
-- run concurrent independent client writes and verify serialization plus a valid final audit chain;
-- verify no client opens a second writable Store path around the daemon contract.
+Use one disposable `CLAUSULA_HOME` and launch `clausula-daemon` independently. From separate processes: read through workspace/HTTP; invoke read-only capabilities with a read principal; perform a confirmed write through the intended Admin path; verify a second daemon is rejected; run concurrent client writes; verify serialization and a valid audit chain; verify clients do not open a second writable Store around the daemon contract.
 
 ### Concrete MCP transport
+Connect the actual MCP runtime intended for use. Verify one authenticated daemon principal/profile is transport-bound; protocol payload cannot replace profile/actor identity; read profiles cannot write; Admin cannot bypass server-issued confirmation; reconnect behavior has expected identity/audit attribution.
 
-Connect the actual MCP client/runtime intended for use, not an in-process adapter fixture.
+### Crash/recovery
+Inject termination after lease acquisition, after auth-manifest creation, during reads, around confirmed writes and during plugin execution. Restart and verify canonical SQLite validity, rollback of incomplete writes, audit continuity and actionable stale-runtime recovery.
 
-Verify:
+### Plugin containment
+Run the existing subprocess runner on the actual Linux host with bubblewrap available. Exercise undeclared network/filesystem/secret access, timeout, process crash, malformed output and network failure. Acceptance requires fail-closed behavior without partial canonical writes. HostPolicy authorization alone is not containment evidence.
 
-- transport/configuration binds one authenticated daemon principal/profile;
-- protocol payload cannot replace profile/actor identity;
-- read profile cannot invoke a write capability;
-- Admin still cannot bypass server-issued confirmation;
-- disconnect/reconnect creates the expected session identity behavior and audit attribution.
+### Platform support decision
+If Windows is part of the first stable support matrix, validate lock/credential ACL and the supported transport boundary there. Otherwise explicitly defer Windows host-isolation guarantees rather than leaving the release gate ambiguous.
 
-### OS credential/transport boundary
-
-On POSIX, validate owner-only permissions for `CLAUSULA_HOME` and `daemon-auth.json`; if Unix-domain sockets are adopted, verify socket ownership/mode and denial from an unauthorized local user/context. On Windows, validate the supported lock plus named-pipe/file ACL equivalent if Windows is in release scope.
-
-Loopback HTTP may remain the portable fallback, but do not represent loopback alone as multi-user OS isolation.
-
-### Crash and recovery
-
-Inject termination at adverse points:
-
-- after daemon lease acquisition;
-- after auth manifest creation;
-- during a read;
-- before/inside/after a confirmed write;
-- during plugin execution.
-
-Restart and verify:
-
-- canonical SQLite state is valid;
-- incomplete writes roll back rather than partially commit;
-- audit chain remains continuous/valid;
-- stale lock/auth runtime state is recovered or fails with an actionable error;
-- a new daemon can eventually become the single owner without manual database surgery.
-
-### Plugin runtime isolation
-
-Run a real disposable plugin subprocess and enforce, at the host layer, the manifest/HostPolicy-approved envelope.
-
-Inject:
-
-- undeclared network destination;
-- undeclared filesystem path;
-- unavailable/undeclared secret;
-- timeout;
-- process crash;
-- malformed output;
-- network failure during a request.
-
-Acceptance requires the plugin to fail without corrupting or partially committing canonical financial state. Record the enforcement mechanism actually used; `HostPolicy.authorize()` by itself is preflight, not sandbox evidence.
-
-## 4. #34 — Live provider, private corpus and target-machine evidence
+## 3. #34 — live provider, private corpus and target-machine evidence
 
 ### Market/provider
-
-Select the actual provider adapter(s) used by the local deployment and verify from provider documentation plus captured data:
-
-- raw payload is captured before canonical conversion;
-- `observed_at`, `known_at`, `recorded_at`, dataset version and quality have defensible semantics;
-- stale, missing and revised observations behave explicitly;
-- provider/network failure fails cleanly;
-- real identifiers resolve correctly after #21;
-- return index is labelled `price_return` or `total_return` only when the provider's definition supports that label.
-
-Do not infer total-return semantics from a price series name.
+Use the provider(s) actually intended for the local deployment. Tencent CN-SH/HK live fetch already provides a useful acceptance subset; do not add providers merely for count. Still verify stale/missing/revised observations, provider failure, real identifier/security-change cases, and raw-payload/provenance semantics. Label benchmark/return series `price_return` or `total_return` only where provider documentation supports that interpretation.
 
 ### Private research corpus
-
-Use a representative local corpus containing Markdown, HTML and PDFs, including at least one malformed or difficult document. Verify:
-
-- extraction reproducibility;
-- page/section locator fidelity;
-- span tracing back to the source;
-- malformed input fails without creating misleading canonical research state;
-- private raw material stays outside public Git.
-
-If semantic/vector retrieval is desired, benchmark candidate engines as disposable derived indexes over immutable research nodes. Index deletion/rebuild must not mutate canonical financial or research facts.
+Use representative local Markdown, HTML and PDFs, including at least one malformed/difficult document. Verify extraction reproducibility, page/section locator fidelity, source-span tracing and fail-closed malformed input. Private material stays outside public Git. If semantic/vector retrieval is evaluated, it remains a disposable index over immutable research nodes; deletion/rebuild must not mutate canonical research facts.
 
 ### Target-machine performance
-
 Run:
 
 ```bash
 python scripts/benchmark_reads.py --profile full
 ```
 
-Record at minimum:
+Record commit SHA, OS/CPU/Python/SQLite versions, setup/read wall time, SQL statement counts and observed memory if available. Treat these as comparative engineering evidence, not universal CI timing thresholds.
 
-- commit SHA;
-- OS / CPU / Python / SQLite version;
-- setup time;
-- read wall time;
-- SQL statement counts;
-- peak/observed memory if available.
+## 4. Final release-candidate gate
+After #23 and #34 are complete, repeat the clean baseline and then run one end-to-end disposable-home scenario through the real daemon: import representative accounts and market state; reconstruct portfolio at explicit `as_of`/`known_as_of`; evaluate policy/headroom/capital envelope; ingest evidence; create/review a Recommendation and link a Decision; evaluate an execution-constrained Plan without order placement; restart the daemon and repeat reads; backup/export and restore/rebuild into a separate home; compare semantic state and audit evidence.
 
-Use the result as comparative engineering evidence, not as a universal millisecond CI threshold.
+Only then finalize version/tag/release workflow. A green GitHub CI run alone is not sufficient evidence for the first stable release.
 
-## 5. Final release candidate gate
+## 5. Evidence handoff format
+For each remaining blockpoint record: issue number and tested commit SHA; OS/runtime/provider versions; commands/configuration with secrets redacted; pass/fail for each acceptance item; minimal relevant failure logs; code/config changes required; sanitized benchmark/result artifacts safe to attach or commit.
 
-After #6/#21/#23/#34 are complete:
-
-```bash
-git switch main
-git pull --ff-only
-python -m pytest -q
-python -m compileall -q clausula tests
-python -m build
-git diff --check
-git status --short
-```
-
-Then perform one end-to-end disposable-home scenario through the real daemon:
-
-1. initialize/import representative accounts and market state;
-2. reconstruct portfolio state at explicit `as_of` / `known_as_of` cutoffs;
-3. evaluate policy/headroom and capital envelope;
-4. ingest representative evidence;
-5. create/review a recommendation and link a decision;
-6. evaluate an execution-constrained plan without autonomous brokerage execution;
-7. close/restart the daemon and repeat read verification;
-8. backup/export, restore/rebuild into a separate home and compare semantic state/audit evidence.
-
-Only after the release candidate passes should the version/tag/release workflow be finalized. Do not create a stable tag solely because GitHub CI is green.
-
-## Evidence handoff format
-
-For each local blockpoint, return a compact report containing:
-
-- issue number and tested commit SHA;
-- OS/runtime/provider versions;
-- exact commands or configuration used, with secrets redacted;
-- pass/fail per acceptance item;
-- failing logs reduced to the relevant error/context;
-- code/config changes required to resolve failures;
-- sanitized benchmark/result artifacts that are safe to commit or attach.
-
-The goal is to bring only genuine host/data failures back into GitHub development, rather than repeating work already proven by deterministic CI.
+Bring only genuine host/data failures back into GitHub development. Do not substitute new AI/research features for closing the release boundary.
