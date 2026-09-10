@@ -3,19 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from .common import canonical_decimal, canonical_timestamp, require_uuid
+from .common import DomainValidationError, canonical_decimal, canonical_timestamp, require_uuid
 
 
 def _text(value: str, field: str) -> str:
     result = str(value).strip()
     if not result:
-        raise ValueError(f"{field} cannot be empty")
+        raise DomainValidationError(f"{field} cannot be empty")
     return result
 
 
 def _span(start: int, end: int) -> tuple[int, int]:
     if isinstance(start, bool) or isinstance(end, bool) or start < 0 or end <= start:
-        raise ValueError("source span must have non-negative start before end")
+        raise DomainValidationError("source span must have non-negative start before end")
     return start, end
 
 
@@ -24,8 +24,20 @@ def _confidence(value: Decimal | str | None) -> str | None:
         return None
     normalized = canonical_decimal(value)
     if not Decimal("0") <= Decimal(normalized) <= Decimal("1"):
-        raise ValueError("confidence must be between 0 and 1")
+        raise DomainValidationError("confidence must be between 0 and 1")
     return normalized
+
+
+def _sha256(value: str, field: str) -> str:
+    normalized = str(value).lower()
+    if len(normalized) != 64 or any(ch not in "0123456789abcdef" for ch in normalized):
+        raise DomainValidationError(f"{field} must be a SHA-256 hexadecimal digest")
+    return normalized
+
+
+def _known_not_after_recorded(*, known_at: str, recorded_at: str) -> None:
+    if known_at > recorded_at:
+        raise DomainValidationError("known_at cannot be after recorded_at")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,19 +53,18 @@ class ResearchDocument:
     recorded_at: str
     source_artifact_id: str
     import_batch_id: str
-    source_artifact_id: str
-    import_batch_id: str
 
     def __post_init__(self) -> None:
-        for field in ("id", "source_artifact_id", "import_batch_id"):
-            object.__setattr__(self, field, require_uuid(getattr(self, field), field))
+        object.__setattr__(self, "id", require_uuid(self.id, "id"))
         object.__setattr__(self, "title", _text(self.title, "document title"))
         object.__setattr__(self, "media_type", _text(self.media_type, "media type"))
         object.__setattr__(self, "source_uri", _text(self.source_uri, "source URI"))
         if not self.text:
-            raise ValueError("document text cannot be empty")
+            raise DomainValidationError("document text cannot be empty")
+        object.__setattr__(self, "text_sha256", _sha256(self.text_sha256, "text_sha256"))
         for field in ("effective_at", "known_at", "recorded_at"):
             object.__setattr__(self, field, canonical_timestamp(getattr(self, field)))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.recorded_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
@@ -84,6 +95,7 @@ class ResearchClaim:
         object.__setattr__(self, "confidence", _confidence(self.confidence))
         for field in ("effective_at", "known_at", "recorded_at"):
             object.__setattr__(self, field, canonical_timestamp(getattr(self, field)))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.recorded_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
@@ -113,11 +125,12 @@ class ResearchEvidence:
         _span(self.span_start, self.span_end)
         object.__setattr__(self, "relation", _text(self.relation, "evidence relation").lower())
         if self.relation not in {"supports", "contradicts", "context"}:
-            raise ValueError("evidence relation is invalid")
+            raise DomainValidationError("evidence relation is invalid")
         object.__setattr__(self, "generated_by", _text(self.generated_by, "generated_by"))
         object.__setattr__(self, "confidence", _confidence(self.confidence))
         for field in ("effective_at", "known_at", "recorded_at"):
             object.__setattr__(self, field, canonical_timestamp(getattr(self, field)))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.recorded_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
@@ -153,10 +166,11 @@ class ThesisRevision:
         object.__setattr__(self, "id", require_uuid(self.id, "revision id"))
         object.__setattr__(self, "thesis_id", require_uuid(self.thesis_id, "thesis_id"))
         if isinstance(self.revision_number, bool) or self.revision_number < 1:
-            raise ValueError("revision number must be positive")
+            raise DomainValidationError("revision number must be positive")
         object.__setattr__(self, "text", _text(self.text, "thesis revision text"))
         for field in ("known_at", "recorded_at"):
             object.__setattr__(self, field, canonical_timestamp(getattr(self, field)))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.recorded_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
@@ -185,6 +199,7 @@ class ResearchLink:
         object.__setattr__(self, "effective_at", canonical_timestamp(self.effective_at))
         object.__setattr__(self, "known_at", canonical_timestamp(self.known_at))
         object.__setattr__(self, "created_at", canonical_timestamp(self.created_at))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.created_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
@@ -206,13 +221,14 @@ class ResearchContradiction:
         first = require_uuid(self.claim_a_id, "claim_a_id")
         second = require_uuid(self.claim_b_id, "claim_b_id")
         if first == second:
-            raise ValueError("a claim cannot contradict itself")
+            raise DomainValidationError("a claim cannot contradict itself")
         object.__setattr__(self, "claim_a_id", min(first, second))
         object.__setattr__(self, "claim_b_id", max(first, second))
         object.__setattr__(self, "kind", _text(self.kind, "contradiction kind").lower())
         object.__setattr__(self, "explanation", _text(self.explanation, "contradiction explanation"))
         for field in ("known_at", "recorded_at"):
             object.__setattr__(self, field, canonical_timestamp(getattr(self, field)))
+        _known_not_after_recorded(known_at=self.known_at, recorded_at=self.recorded_at)
         for field in ("source_artifact_id", "import_batch_id"):
             object.__setattr__(self, field, require_uuid(getattr(self, field), field))
 
