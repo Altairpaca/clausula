@@ -26,6 +26,11 @@ from .auth import (
     LocalAuthRegistry,
     LocalPrincipal,
 )
+from .import_preview import (
+    ImportPreviewRequestError,
+    MAX_IMPORT_PREVIEW_REQUEST_BYTES,
+    preview_uploaded_csv,
+)
 
 
 HTML_CSP = (
@@ -99,6 +104,9 @@ def create_server(
             if path == "/workspace/snapshot":
                 self._workspace_snapshot()
                 return
+            if path == "/workspace/import-preview":
+                self._workspace_import_preview()
+                return
             if path == "/confirmations/challenge":
                 self._issue_confirmation_challenge()
                 return
@@ -139,6 +147,38 @@ def create_server(
                         }
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                 self._send_error(400, "invalid_snapshot_request", str(error))
+                return
+            self._send(200, result)
+
+        def _workspace_import_preview(self) -> None:
+            media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
+                self._send_error(
+                    415,
+                    "unsupported_media_type",
+                    "workspace import preview requires application/json",
+                )
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send_error(400, "invalid_content_length", "Content-Length must be an integer")
+                return
+            if size < 0:
+                self._send_error(400, "invalid_content_length", "Content-Length must not be negative")
+                return
+            if size > MAX_IMPORT_PREVIEW_REQUEST_BYTES:
+                self._send_error(
+                    413,
+                    "preview_payload_too_large",
+                    f"import preview request is limited to {MAX_IMPORT_PREVIEW_REQUEST_BYTES} bytes",
+                )
+                return
+            try:
+                payload = self._read_json_object()
+                result = preview_uploaded_csv(payload)
+            except (ImportPreviewRequestError, ValueError, json.JSONDecodeError) as error:
+                self._send_error(400, "invalid_import_preview", str(error))
                 return
             self._send(200, result)
 

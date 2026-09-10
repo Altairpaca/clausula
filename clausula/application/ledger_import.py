@@ -371,11 +371,10 @@ def _parse_row(
     )
 
 
-def parse_csv_import(
-    path: str | Path, *, recorded_at: str | None = None
+def parse_csv_content(
+    content: bytes | str, *, recorded_at: str | None = None
 ) -> CsvImportPlan:
-    source_path = Path(path)
-    raw = source_path.read_bytes()
+    raw = content.encode("utf-8") if isinstance(content, str) else bytes(content)
     digest = hashlib.sha256(raw).hexdigest()
     checked_at = canonical_timestamp(recorded_at) if recorded_at is not None else now()
     errors: list[CsvImportIssue] = []
@@ -447,6 +446,12 @@ def parse_csv_import(
         tuple(transactions),
         tuple(errors),
     )
+
+
+def parse_csv_import(
+    path: str | Path, *, recorded_at: str | None = None
+) -> CsvImportPlan:
+    return parse_csv_content(Path(path).read_bytes(), recorded_at=recorded_at)
 
 
 def preview_csv_import(
