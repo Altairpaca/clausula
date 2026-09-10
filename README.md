@@ -45,10 +45,10 @@ The Capital Cockpit is decision-first: `as_of` and `known_as_of` remain visible,
 | `clausula/analytics` | portfolio, policy, planning, performance and accounting calculations |
 | `clausula/adapters` | SQLite, backup, audit, migrations, market/accounting projections and MCP |
 | `clausula/capabilities` | permissioned capability registry shared by integration surfaces |
-| `clausula/plugins` | plugin manifest, discovery and host-policy authorization contracts |
+| `clausula/plugins` | plugin manifest, discovery, host-policy authorization and supervised subprocess execution |
 | `clausula/api`, `clausula/ui`, `cli.py`, `sdk.py` | daemon, local HTTP/workspace, CLI and Python projections |
 
-Research ingestion supports local text/Markdown/HTML/PDF plus stateless web capture with source maps and provenance. Market provider snapshot and benchmark-return contracts are implemented, while real provider/corpus acceptance remains deliberately outside synthetic CI.
+Research ingestion supports local text/Markdown/HTML/PDF plus stateless web capture with source maps and provenance. Market provider contracts include raw-payload capture and explicit return semantics; Tencent CN/HK daily data has a live acceptance subset, while broader real-provider and private-corpus evidence remains a release-gate task.
 
 See [`docs/project/STATUS.md`](docs/project/STATUS.md) for implementation status and [`docs/project/LOCAL_ACCEPTANCE.md`](docs/project/LOCAL_ACCEPTANCE.md) for the remaining release gates.
 
@@ -63,9 +63,9 @@ git diff --check
 
 ## Security and release boundary
 
-Clausula is local-first. Runtime financial data, databases, backups, raw private research, agent state, tool configuration and credentials do not belong in this repository. Loopback bearer authentication is a local integration boundary, not an internet-facing TLS or multi-tenant security contract. Plugin host policy is authorization preflight, not an OS sandbox. See [`SECURITY.md`](SECURITY.md).
+Clausula is local-first. Runtime financial data, databases, backups, raw private research, agent state, tool configuration and credentials do not belong in this repository. Loopback bearer authentication is a local integration boundary, not an internet-facing TLS or multi-tenant security contract. Plugin host policy and the Linux `bwrap` runner provide separate authorization and containment layers; real-host containment still requires local acceptance evidence. See [`SECURITY.md`](SECURITY.md).
 
-There is intentionally no stable release tag yet. The first tagged release is gated on repository protection plus the forward-migration, host-runtime and real-data acceptance work tracked in #6, #21, #23 and #34.
+There is intentionally no stable release tag yet. Repository protection (#6) and the accounting v12 migration (#21) are complete. The first tagged release is now gated principally on host-runtime acceptance (#23) and real-data/private-corpus/target-machine acceptance (#34).
 
 ## License
 
