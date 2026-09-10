@@ -151,6 +151,14 @@ def create_server(
             self._send(200, result)
 
         def _workspace_import_preview(self) -> None:
+            media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
+                self._send_error(
+                    415,
+                    "unsupported_media_type",
+                    "workspace import preview requires application/json",
+                )
+                return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
             except ValueError:
