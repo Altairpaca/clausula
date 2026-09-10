@@ -26,6 +26,8 @@ class ResearchThesisWriter:
         created = canonical_timestamp(created_at or known_at)
         recorded = canonical_timestamp(recorded_at or now())
         knowledge = canonical_timestamp(known_at)
+        if knowledge > recorded:
+            raise ResearchError("known_at cannot be after recorded_at")
         thesis_id = new_id()
         revision_id = new_id()
         event = {
