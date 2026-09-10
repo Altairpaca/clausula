@@ -126,12 +126,10 @@ def _parsed_semantic(
         )
         for leg in transaction.legs
     )
-    return (
-        transaction.type,
-        transaction.effective_at,
-        transaction.known_at,
-        tuple(legs),
-    )
+    # The first accepted known_at remains canonical. A later export of the same
+    # source event may be learned later (or default known_at to its ingest time)
+    # without redefining the event's economic identity.
+    return transaction.type, transaction.effective_at, tuple(legs)
 
 
 def _stored_semantic(
@@ -147,12 +145,7 @@ def _stored_semantic(
         )
         for leg in transaction.get("legs", ())
     )
-    return (
-        str(transaction["type"]).lower(),
-        str(transaction["effective_at"]),
-        str(transaction["known_at"]),
-        tuple(legs),
-    )
+    return str(transaction["type"]).lower(), str(transaction["effective_at"]), tuple(legs)
 
 
 def reconcile_csv_plan(
