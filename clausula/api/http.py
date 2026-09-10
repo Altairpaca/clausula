@@ -176,7 +176,8 @@ def create_server(
                 return
             try:
                 payload = self._read_json_object()
-                result = preview_uploaded_csv(payload)
+                with registry_lock:
+                    result = preview_uploaded_csv(payload, repository)
             except (ImportPreviewRequestError, ValueError, json.JSONDecodeError) as error:
                 self._send_error(400, "invalid_import_preview", str(error))
                 return
