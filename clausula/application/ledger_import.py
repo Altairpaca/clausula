@@ -169,16 +169,26 @@ def _instrument(row: Mapping[str, str | None], currency: str) -> ParsedInstrumen
         return None
 
     raw_scheme = row.get("identifier_scheme")
-    scheme = "ticker" if raw_scheme in (None, "") else _required_text(str(raw_scheme), "identifier_scheme")
+    scheme = (
+        "ticker"
+        if raw_scheme in (None, "")
+        else _required_text(str(raw_scheme), "identifier_scheme")
+    )
     try:
         identifier = InstrumentIdentifier(ticker, scheme)
     except ValueError as exc:
         raise _RowError("ticker", "invalid_instrument", str(exc)) from exc
 
     raw_asset_type = row.get("asset_type")
-    asset_type = "stock" if raw_asset_type in (None, "") else _required_text(str(raw_asset_type), "asset_type")
+    asset_type = (
+        "stock"
+        if raw_asset_type in (None, "")
+        else _required_text(str(raw_asset_type), "asset_type").lower()
+    )
     name = (row.get("instrument_name") or "").strip()
-    return ParsedInstrument(identifier.value, identifier.scheme, name, asset_type, currency)
+    return ParsedInstrument(
+        identifier.value, identifier.scheme, name, asset_type, currency
+    )
 
 
 def _conserve(legs: list[ParsedLeg]) -> None:
@@ -187,7 +197,11 @@ def _conserve(legs: list[ParsedLeg]) -> None:
         totals[leg.currency] = totals.get(leg.currency, Decimal(0)) + leg.amount
     unbalanced = {currency: value for currency, value in totals.items() if value != 0}
     if unbalanced:
-        raise _RowError("amount", "unbalanced_transaction", f"transaction amounts do not conserve by currency: {unbalanced}")
+        raise _RowError(
+            "amount",
+            "unbalanced_transaction",
+            f"transaction amounts do not conserve by currency: {unbalanced}",
+        )
 
 
 def _parse_row(
@@ -225,7 +239,9 @@ def _parse_row(
     except ValueError as exc:
         raise _RowError("known_at", "invalid_timestamp", str(exc)) from exc
     if known_at > recorded_at:
-        raise _RowError("known_at", "future_knowledge", "known_at cannot be after recorded_at")
+        raise _RowError(
+            "known_at", "future_knowledge", "known_at cannot be after recorded_at"
+        )
 
     raw_currency = row.get("currency")
     if raw_currency in (None, ""):
@@ -253,14 +269,22 @@ def _parse_row(
     legs: list[ParsedLeg] = []
     if transaction_type in {"buy", "sell"}:
         if instrument is None:
-            raise _RowError("ticker", "instrument_required", f"{transaction_type} requires an instrument")
+            raise _RowError(
+                "ticker", "instrument_required", f"{transaction_type} requires an instrument"
+            )
         if quantity <= 0:
-            raise _RowError("quantity", "positive_required", f"{transaction_type} quantity must be positive")
+            raise _RowError(
+                "quantity",
+                "positive_required",
+                f"{transaction_type} quantity must be positive",
+            )
         if transaction_type == "buy":
             legs.append(ParsedLeg(instrument, quantity, gross, currency, "position"))
             cash_amount = -(gross + fee)
         else:
-            legs.append(ParsedLeg(instrument, -quantity, -gross, currency, "position"))
+            legs.append(
+                ParsedLeg(instrument, -quantity, -gross, currency, "position")
+            )
             cash_amount = gross - fee
         legs.append(ParsedLeg(None, Decimal(0), cash_amount, currency, "cash"))
         if fee:
@@ -269,36 +293,66 @@ def _parse_row(
         direction = Decimal(1) if transaction_type == "transfer_in" else Decimal(-1)
         if instrument is not None:
             if quantity <= 0:
-                raise _RowError("quantity", "positive_required", "instrument transfer quantity must be positive")
-            legs.append(ParsedLeg(instrument, direction * quantity, Decimal(0), currency, "position"))
+                raise _RowError(
+                    "quantity",
+                    "positive_required",
+                    "instrument transfer quantity must be positive",
+                )
+            legs.append(
+                ParsedLeg(
+                    instrument,
+                    direction * quantity,
+                    Decimal(0),
+                    currency,
+                    "position",
+                )
+            )
             if fee:
                 legs.append(ParsedLeg(None, Decimal(0), -fee, currency, "cash"))
                 legs.append(ParsedLeg(None, Decimal(0), fee, currency, "fee"))
         else:
             cash_amount = gross - fee if direction > 0 else -(gross + fee)
             legs.append(ParsedLeg(None, Decimal(0), cash_amount, currency, "cash"))
-            legs.append(ParsedLeg(None, Decimal(0), -direction * gross, currency, "external"))
+            legs.append(
+                ParsedLeg(
+                    None, Decimal(0), -direction * gross, currency, "external"
+                )
+            )
             if fee:
                 legs.append(ParsedLeg(None, Decimal(0), fee, currency, "fee"))
     elif transaction_type in {"deposit", "withdrawal"}:
         direction = Decimal(1) if transaction_type == "deposit" else Decimal(-1)
         cash_amount = gross - fee if direction > 0 else -(gross + fee)
         legs.append(ParsedLeg(None, Decimal(0), cash_amount, currency, "cash"))
-        legs.append(ParsedLeg(None, Decimal(0), -direction * gross, currency, "external"))
+        legs.append(
+            ParsedLeg(None, Decimal(0), -direction * gross, currency, "external")
+        )
         if fee:
             legs.append(ParsedLeg(None, Decimal(0), fee, currency, "fee"))
     elif transaction_type in {"dividend", "interest"}:
         legs.append(ParsedLeg(None, Decimal(0), gross - fee, currency, "cash"))
-        legs.append(ParsedLeg(instrument, Decimal(0), -gross, currency, "income"))
+        legs.append(
+            ParsedLeg(instrument, Decimal(0), -gross, currency, "income")
+        )
         if fee:
             legs.append(ParsedLeg(None, Decimal(0), fee, currency, "fee"))
     elif transaction_type in {"fee", "tax"}:
         if gross <= 0:
-            raise _RowError("amount", "positive_required", f"{transaction_type} amount must be positive")
+            raise _RowError(
+                "amount",
+                "positive_required",
+                f"{transaction_type} amount must be positive",
+            )
         legs.append(ParsedLeg(None, Decimal(0), -gross, currency, "cash"))
-        legs.append(ParsedLeg(instrument, Decimal(0), gross, currency, transaction_type))
+        legs.append(
+            ParsedLeg(instrument, Decimal(0), gross, currency, transaction_type)
+        )
     else:
-        raise _RowError("type", "unsupported_type", f"unsupported transaction type: {transaction_type}")
+        raise _RowError(
+            "type",
+            "unsupported_type",
+            f"unsupported transaction type: {transaction_type}",
+        )
 
     _conserve(legs)
     description = (row.get("description") or f"CSV row {row_number}").strip()
@@ -317,7 +371,9 @@ def _parse_row(
     )
 
 
-def parse_csv_import(path: str | Path, *, recorded_at: str | None = None) -> CsvImportPlan:
+def parse_csv_import(
+    path: str | Path, *, recorded_at: str | None = None
+) -> CsvImportPlan:
     source_path = Path(path)
     raw = source_path.read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
@@ -353,20 +409,35 @@ def parse_csv_import(path: str | Path, *, recorded_at: str | None = None) -> Csv
     for row_number, row in enumerate(reader, 2):
         row_count += 1
         raw_id = row.get("id")
-        external_id = str(row_number - 1) if raw_id in (None, "") else str(raw_id).strip()
+        external_id = (
+            str(row_number - 1) if raw_id in (None, "") else str(raw_id).strip()
+        )
         if not external_id:
-            errors.append(CsvImportIssue(row_number, "id", "empty_value", "id cannot be empty"))
+            errors.append(
+                CsvImportIssue(row_number, "id", "empty_value", "id cannot be empty")
+            )
             continue
         if external_id in external_ids:
-            errors.append(CsvImportIssue(row_number, "id", "duplicate_id", f"duplicate id {external_id!r}"))
+            errors.append(
+                CsvImportIssue(
+                    row_number,
+                    "id",
+                    "duplicate_id",
+                    f"duplicate id {external_id!r}",
+                )
+            )
             continue
         external_ids.add(external_id)
         try:
-            transactions.append(_parse_row(row, row_number, checked_at, external_id))
+            transactions.append(
+                _parse_row(row, row_number, checked_at, external_id)
+            )
         except _RowError as exc:
             errors.append(CsvImportIssue(row_number, exc.field, exc.code, str(exc)))
         except (KeyError, TypeError, ValueError) as exc:
-            errors.append(CsvImportIssue(row_number, "row", "invalid_row", str(exc)))
+            errors.append(
+                CsvImportIssue(row_number, "row", "invalid_row", str(exc))
+            )
 
     return CsvImportPlan(
         digest,
@@ -419,7 +490,9 @@ def commit_csv_import(
 
     source_path = Path(path)
     if hashlib.sha256(source_path.read_bytes()).hexdigest() != plan.source_sha256:
-        raise ImportValidationError(1, "source changed while import was being validated")
+        raise ImportValidationError(
+            1, "source changed while import was being validated"
+        )
 
     with repository.write_transaction():
         repository.require_account(account_id)
@@ -433,7 +506,9 @@ def commit_csv_import(
             legs = tuple(
                 TransactionLeg(
                     account_id,
-                    None if leg.instrument is None else instrument_ids[leg.instrument],
+                    None
+                    if leg.instrument is None
+                    else instrument_ids[leg.instrument],
                     leg.quantity,
                     leg.amount,
                     leg.currency,
