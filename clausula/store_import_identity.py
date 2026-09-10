@@ -114,12 +114,7 @@ class Store(_BaseStore):
             )
             for leg in transaction.legs
         )
-        return (
-            transaction.type,
-            transaction.effective_at,
-            transaction.known_at,
-            tuple(legs),
-        )
+        return transaction.type, transaction.effective_at, tuple(legs)
 
     @staticmethod
     def _stored_import_semantic(transaction: dict[str, Any]) -> tuple[Any, ...]:
@@ -135,12 +130,7 @@ class Store(_BaseStore):
             )
             for leg in transaction.get("legs", ())
         )
-        return (
-            str(transaction["type"]).lower(),
-            str(transaction["effective_at"]),
-            str(transaction["known_at"]),
-            tuple(legs),
-        )
+        return str(transaction["type"]).lower(), str(transaction["effective_at"]), tuple(legs)
 
     def _classify_import_identity(
         self, transaction: Transaction, external_id: str
