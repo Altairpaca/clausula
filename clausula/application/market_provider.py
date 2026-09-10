@@ -18,6 +18,7 @@ from clausula.domain import (
 
 from .market import MARKET_CSV_ADAPTER_VERSION, MARKET_SCHEMA_VERSION, RETURN_SEMANTICS
 from .ports import CoreRepository
+from .provider_contract import inspect_provider_snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,9 @@ class ProviderSnapshotImporter:
         if not snapshot.observations:
             raise ValueError("provider snapshot requires at least one observation")
         recorded_at = now()
+
+        report = inspect_provider_snapshot(snapshot, recorded_at=recorded_at)
+        report.raise_for_errors()
 
         raw_json = json.dumps(
             dict(snapshot.raw_payload),
