@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from clausula.analytics import replay_fifo
 from clausula.domain import canonical_decimal, canonical_timestamp, dec, now
 
 from .ledger import LedgerService as _BaseLedgerService
+from .ledger_import import commit_csv_import, preview_csv_import
 
 
 class LedgerService(_BaseLedgerService):
-    """Ledger service with bounded read queries and multi-cutoff replay.
+    """Ledger service with bounded reads and validated CSV import planning.
 
-    Write behavior is inherited unchanged. Read behavior prefers the public
-    Store batch projections when available and falls back to the scalar
-    repository contract for third-party/in-memory repositories.
+    CSV preview and commit share one pure parser so validation can run without
+    persistence while the write path keeps identical financial semantics.
+    Read behavior prefers public Store batch projections when available and
+    falls back to the scalar repository contract for third-party/in-memory
+    repositories.
     """
+
+    def preview_csv(self, account_id: str, path: str | Path) -> dict[str, Any]:
+        return preview_csv_import(self.repository, account_id, path)
+
+    def import_csv(self, account_id: str, path: str | Path) -> dict[str, str | int]:
+        return commit_csv_import(self.repository, account_id, path)
 
     def _transactions_with_legs(
         self,

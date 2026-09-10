@@ -2,6 +2,7 @@ from .accounting import register_accounting_capabilities
 from .core import build_core_registry as _build_core_registry
 from .equity_monitor import register_equity_monitor_capabilities
 from .execution import register_execution_capabilities
+from .ledger_preview import register_ledger_preview_capability
 from .market_intelligence import register_market_intelligence_capabilities
 from .research_ingest import register_research_ingestion_capabilities
 from .workspace import register_decision_workspace_capabilities
@@ -17,6 +18,7 @@ from .registry import (
 
 def build_core_registry(repository):
     registry = _build_core_registry(repository)
+    register_ledger_preview_capability(registry, repository)
     # Local audit/provenance-backed projections extend the portable core without
     # making monitoring, research extraction, or configuration state canonical
     # financial truth.

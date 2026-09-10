@@ -4,6 +4,7 @@
 # modules. Baseline modules remain semantic references; subclasses replace only
 # bounded read paths or add deterministic replay support.
 from .ledger import ImportValidationError
+from .ledger_import import CsvImportIssue, CsvImportPlan, parse_csv_import
 from .ledger_fast import LedgerService
 from . import ledger as _ledger_module
 
@@ -42,6 +43,8 @@ from .decision_workspace import DecisionWorkspaceRepository, DecisionWorkspaceSe
 __all__ = [
     "BenchmarkService",
     "CoreRepository",
+    "CsvImportIssue",
+    "CsvImportPlan",
     "ExtractedDocument",
     "ImportValidationError",
     "LedgerRebuilder",
@@ -56,6 +59,7 @@ __all__ = [
     "ProviderSnapshot",
     "ProviderSnapshotImporter",
     "inspect_provider_snapshot",
+    "parse_csv_import",
     "ReturnSeriesRepository",
     "PortfolioService",
     "PolicyService",
