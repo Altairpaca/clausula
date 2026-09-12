@@ -43,7 +43,7 @@ def xirr(cash_flows: Sequence[tuple[str, Decimal]]) -> Decimal | None:
             return low
         if high_value == 0:
             return high
-        if low_value * high_value < 0:
+        if (low_value < 0) != (high_value < 0):
             break
         high = high * 2 + 1
         high_value = npv(high)
@@ -53,9 +53,10 @@ def xirr(cash_flows: Sequence[tuple[str, Decimal]]) -> Decimal | None:
     for _ in range(160):
         midpoint = (low + high) / 2
         value = npv(midpoint)
-        if abs(value) < Decimal("1e-24") or high - low < Decimal("1e-24"):
+        # Rate convergence must not depend on the units of the cash flows.
+        if value == 0 or high - low < Decimal("1e-24"):
             return midpoint
-        if low_value * value <= 0:
+        if (low_value < 0) != (value < 0):
             high = midpoint
             high_value = value
         else:
